@@ -42,6 +42,11 @@ Taskfiles are to browser automation what Dockerfiles are to containers - **porta
 - **Multi-Provider** - Works with Claude, OpenAI, or Gemini
 - **Desktop App** - Native performance with Tauri (Windows, macOS, Linux)
 
+### Automation Targets
+
+- [x] **Browser** - Automate anything in the browser with Chrome
+- [ ] **OS** - Full desktop automation (coming soon)
+
 ## Getting Started
 
 ### Prerequisites
