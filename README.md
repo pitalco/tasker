@@ -10,9 +10,34 @@ Record a task as a template. Feed it into Tasker with additional instructions an
 2. **Save** - Stop recording to save your workflow as a reusable template
 3. **Run** - Execute the workflow with AI that adapts to dynamic content
 
+## Taskfiles
+
+Taskfiles are to browser automation what Dockerfiles are to containers - **portable, shareable, and extensible**.
+
+```json
+{
+  "name": "Submit expense report",
+  "start_url": "https://expenses.company.com",
+  "actions": [
+    { "tool": "click_element", "hints": { "text": "New Report" } },
+    { "tool": "input_text", "params": { "text": "{{description}}" } },
+    { "tool": "click_element", "hints": { "text": "Submit" } }
+  ]
+}
+```
+
+**Why Taskfiles?**
+
+- **Version Control** - Track changes to your automations in Git
+- **Share & Reuse** - Export workflows and share with your team
+- **Parameterized** - Use variables like `{{description}}` for dynamic input
+- **Human Readable** - JSON format that's easy to understand and edit
+- **AI-Enhanced** - Hints guide the AI to find elements even when pages change
+
 ## Features
 
 - **Visual Recording** - No code required. Just click, type, and interact naturally
+- **Taskfiles** - Portable workflow format you can version, share, and customize
 - **AI-Powered Execution** - LLMs understand context and adapt to page changes
 - **Multi-Provider** - Works with Claude, OpenAI, or Gemini
 - **Desktop App** - Native performance with Tauri (Windows, macOS, Linux)
