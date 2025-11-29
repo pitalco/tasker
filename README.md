@@ -47,6 +47,15 @@ Taskfiles are to browser automation what Dockerfiles are to containers - **porta
 - [x] **Browser** - Automate anything in the browser with Chrome
 - [ ] **OS** - Full desktop automation (coming soon)
 
+## Tasker Deploy (Coming Soon)
+
+Deploy your Taskfiles to the cloud with one click.
+
+- **Scheduled Runs** - Set up recurring runs of Tasks (hourly, daily, weekly)
+- **HTTP Triggers** - Trigger Taskfiles via API endpoints
+- **Webhooks** - Connect to Zapier, n8n, or your own services
+- **Dashboard** - Monitor runs, view logs, and track usage
+
 ## Getting Started
 
 ### Prerequisites
