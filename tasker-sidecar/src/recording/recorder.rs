@@ -214,10 +214,14 @@ impl BrowserRecorder {
             .setup_event_binding("__taskerCaptureEvent")
             .await?;
 
-        // Inject recording script (now calls __taskerCaptureEvent directly)
+        // Register script to run on EVERY new document (survives navigations!)
+        // This is critical - without this, clicks that cause navigation won't be recorded
+        self.browser.add_script_on_new_document(RECORDING_SCRIPT).await?;
+
+        // Also run immediately on current page
         self.browser.evaluate(RECORDING_SCRIPT).await?;
 
-        tracing::info!("Recording started: {} (using CDP event binding)", session_id);
+        tracing::info!("Recording started: {} (using CDP event binding with navigation persistence)", session_id);
 
         // Start event listener in background (instant, no polling!)
         self.spawn_event_listener(event_stream);
@@ -280,16 +284,12 @@ impl BrowserRecorder {
                                     }
                                 }
 
-                                // Check URL occasionally for navigation (re-inject script if needed)
+                                // Track URL changes for logging (script auto-injects via addScriptToEvaluateOnNewDocument)
                                 url_check_count += 1;
-                                if url_check_count % 5 == 0 {
+                                if url_check_count % 10 == 0 {
                                     if let Ok(current_url) = browser.current_url().await {
                                         if current_url != last_url && !last_url.is_empty() {
-                                            // Re-inject recording script after navigation
-                                            let _ = browser.evaluate(RECORDING_SCRIPT).await;
-                                            // Re-setup the binding for the new page context
-                                            let _ = browser.setup_event_binding("__taskerCaptureEvent").await;
-                                            tracing::debug!("Re-injected recording script after navigation to: {}", current_url);
+                                            tracing::debug!("Navigation detected: {} -> {}", last_url, current_url);
                                         }
                                         last_url = current_url;
                                     }

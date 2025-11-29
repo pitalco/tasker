@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::page::{AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat};
 use chromiumoxide::cdp::js_protocol::runtime::{AddBindingParams, EventBindingCalled};
 use chromiumoxide::listeners::EventStream;
 use chromiumoxide::Page;
@@ -388,6 +388,23 @@ impl BrowserManager {
 
         tracing::debug!("CDP binding '{}' set up for instant event capture", binding_name);
         Ok(event_stream)
+    }
+
+    /// Add a script to run on every new document (persists across navigations)
+    /// This is critical for recording - ensures the script survives page navigations
+    pub async fn add_script_on_new_document(&self, script: &str) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        let params = AddScriptToEvaluateOnNewDocumentParams::new(script.to_string());
+        page.execute(params)
+            .await
+            .map_err(|e| anyhow!("Failed to add script to evaluate on new document: {}", e))?;
+
+        tracing::debug!("Added script to evaluate on every new document");
+        Ok(())
     }
 
     /// Close the browser
