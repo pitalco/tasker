@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tasker Recording Test</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+    button, input, select, textarea { margin: 5px; padding: 8px; }
+    #result { margin-top: 20px; padding: 10px; background: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Recording Test Page</h1>
+
+  <!-- Click targets -->
+  <div class="section">
+    <h2>Click Targets</h2>
+    <button id="btn-simple">Simple Button</button>
+    <button id="btn-submit" type="submit">Submit Form</button>
+    <a id="link-test" href="#clicked">Test Link</a>
+  </div>
+
+  <!-- Text inputs -->
+  <div class="section">
+    <h2>Text Inputs</h2>
+    <input id="input-text" type="text" placeholder="Enter text here" />
+    <input id="input-email" type="email" name="email" placeholder="Email" />
+    <textarea id="textarea" placeholder="Multi-line text"></textarea>
+  </div>
+
+  <!-- Dropdown -->
+  <div class="section">
+    <h2>Dropdown</h2>
+    <select id="dropdown">
+      <option value="">Select...</option>
+      <option value="opt1">Option 1</option>
+      <option value="opt2">Option 2</option>
+      <option value="opt3">Option 3</option>
+    </select>
+  </div>
+
+  <!-- Form for Enter key testing -->
+  <div class="section">
+    <h2>Form (Enter Key Test)</h2>
+    <form id="test-form" onsubmit="return false;">
+      <input id="form-input" type="text" placeholder="Press Enter here" />
+    </form>
+  </div>
+
+  <!-- Result display -->
+  <div id="result">Interactions will be logged here</div>
+
+  <script>
+    // Track interactions for verification
+    window.testLog = [];
+
+    document.addEventListener('click', e => {
+      const msg = `click: ${e.target.id || e.target.tagName}`;
+      window.testLog.push({type: 'click', target: e.target.id});
+      document.getElementById('result').textContent = msg;
+    });
+
+    document.addEventListener('input', e => {
+      const msg = `input: ${e.target.id} = "${e.target.value}"`;
+      window.testLog.push({type: 'input', target: e.target.id, value: e.target.value});
+      document.getElementById('result').textContent = msg;
+    });
+
+    document.addEventListener('change', e => {
+      const msg = `change: ${e.target.id} = "${e.target.value}"`;
+      window.testLog.push({type: 'change', target: e.target.id, value: e.target.value});
+      document.getElementById('result').textContent = msg;
+    });
+
+    document.addEventListener('keydown', e => {
+      if (['Enter', 'Tab', 'Escape', 'Backspace', 'Delete'].includes(e.key)) {
+        const msg = `keydown: ${e.key}`;
+        window.testLog.push({type: 'keydown', key: e.key});
+        document.getElementById('result').textContent = msg;
+      }
+    });
+  </script>
+</body>
+</html>

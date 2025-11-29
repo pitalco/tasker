@@ -1,0 +1,43 @@
+use serde::Deserialize;
+use std::collections::HashMap;
+
+use super::workflow::Workflow;
+
+#[derive(Debug, Deserialize)]
+pub struct StartRecordingRequest {
+    pub start_url: String,
+    #[serde(default)]
+    pub headless: bool,
+    #[serde(default = "default_viewport_width")]
+    pub viewport_width: i32,
+    #[serde(default = "default_viewport_height")]
+    pub viewport_height: i32,
+}
+
+fn default_viewport_width() -> i32 {
+    1280
+}
+fn default_viewport_height() -> i32 {
+    720
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartReplayRequest {
+    pub workflow: Workflow,
+    #[serde(default)]
+    pub use_ai: bool,
+    pub llm_provider: Option<String>,
+    pub llm_model: Option<String>,
+    pub llm_api_key: Option<String>,
+    pub task_description: Option<String>,
+    #[serde(default)]
+    pub variables: HashMap<String, serde_json::Value>,
+    #[serde(default = "default_iterations")]
+    pub iterations: i32,
+    #[serde(default)]
+    pub headless: bool,
+}
+
+fn default_iterations() -> i32 {
+    1
+}

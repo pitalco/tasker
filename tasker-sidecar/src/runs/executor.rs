@@ -1,0 +1,325 @@
+use anyhow::{anyhow, Result};
+use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
+use genai::Client;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+use crate::browser::BrowserManager;
+use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
+
+use super::logger::RunLogger;
+use super::models::{Run, RunStatus, RunStep};
+
+const MAX_STEPS: usize = 50;
+const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+
+/// System prompt for the automation agent
+const SYSTEM_PROMPT: &str = r#"You are a browser automation agent. Your task is to complete web-based tasks by using the available tools.
+
+You will be given:
+1. A task description to complete
+2. Optional hints from a recorded workflow (use as guidance, not strict instructions)
+3. The current page state (URL, screenshot, interactive elements)
+
+Use the available tools to:
+1. Navigate to pages
+2. Click elements
+3. Type text into inputs
+4. Extract information
+5. Complete forms
+
+Important guidelines:
+- Elements are identified by their index from the element list
+- Take screenshots to understand the page state
+- Wait for pages to load after navigation
+- If an action fails, try alternatives
+- Call the 'done' tool when the task is complete
+- Be efficient - don't take unnecessary actions
+
+When you have completed the task or cannot proceed further, call the 'done' tool with a summary."#;
+
+/// Configuration for a run execution
+pub struct ExecutorConfig {
+    pub model: String,
+    pub api_key: Option<String>,
+    pub max_steps: usize,
+    pub headless: bool,
+}
+
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        Self {
+            model: DEFAULT_MODEL.to_string(),
+            api_key: None,
+            max_steps: MAX_STEPS,
+            headless: false,
+        }
+    }
+}
+
+/// Run executor - manages the AI agent loop
+pub struct RunExecutor {
+    config: ExecutorConfig,
+    registry: ToolRegistry,
+    logger: RunLogger,
+    browser: Arc<BrowserManager>,
+}
+
+impl RunExecutor {
+    pub fn new(logger: RunLogger, browser: Arc<BrowserManager>, config: ExecutorConfig) -> Self {
+        let mut registry = ToolRegistry::new();
+        register_all_tools(&mut registry);
+
+        Self {
+            config,
+            registry,
+            logger,
+            browser,
+        }
+    }
+
+    /// Execute a run
+    pub async fn execute(&self, run: &Run) -> Result<()> {
+        let run_id = &run.id;
+
+        // Update status to running
+        self.logger.status(run_id, RunStatus::Running, None);
+        self.logger.info(run_id, "Starting run execution");
+
+        // Build the initial prompt
+        let mut user_prompt = format!("Task: {}", run.task_description.as_deref().unwrap_or("Complete the workflow"));
+
+        // Add workflow hints if available
+        if let Some(hints) = &run.metadata.get("hints") {
+            user_prompt.push_str(&format!("\n\nWorkflow hints (use as guidance):\n{}", hints));
+        }
+
+        // Add custom instructions if provided
+        if let Some(instructions) = &run.custom_instructions {
+            user_prompt.push_str(&format!("\n\nAdditional instructions:\n{}", instructions));
+        }
+
+        // Create tool context
+        let ctx = ToolContext {
+            run_id: run_id.clone(),
+            browser: Arc::clone(&self.browser),
+        };
+
+        // Set up API key if provided
+        if let Some(ref api_key) = self.config.api_key {
+            std::env::set_var("ANTHROPIC_API_KEY", api_key);
+        }
+
+        // Create genai client
+        let client = Client::default();
+
+        // Convert our tools to genai tools
+        let tools = self.build_genai_tools();
+
+        // Build initial chat request with system prompt
+        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
+            .with_tools(tools);
+
+        // Add initial user message with task and screenshot
+        let initial_message = self.build_user_message_with_screenshot(&user_prompt).await;
+        chat_req = chat_req.append_message(initial_message);
+
+        let mut step_number = 0;
+
+        // Agent loop
+        loop {
+            if step_number >= self.config.max_steps {
+                self.logger.warn(run_id, format!("Reached maximum steps limit ({})", self.config.max_steps));
+                self.logger.status(
+                    run_id,
+                    RunStatus::Completed,
+                    Some("Completed (reached step limit)".to_string()),
+                );
+                break;
+            }
+
+            self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
+
+            // Call the model
+            let chat_res = match client.exec_chat(&self.config.model, chat_req.clone(), None).await {
+                Ok(res) => res,
+                Err(e) => {
+                    let error = format!("LLM request failed: {}", e);
+                    self.logger.error(run_id, &error);
+                    self.logger.status(run_id, RunStatus::Failed, Some(error));
+                    return Err(anyhow!("LLM request failed: {}", e));
+                }
+            };
+
+            // Check for tool calls
+            let tool_calls = chat_res.into_tool_calls();
+
+            if tool_calls.is_empty() {
+                // No tool calls - model might have responded with text
+                self.logger.info(run_id, "No tool calls in response, task may be complete");
+                self.logger.status(run_id, RunStatus::Completed, None);
+                break;
+            }
+
+            // Process each tool call
+            let mut tool_responses = Vec::new();
+            let mut is_done = false;
+
+            for tool_call in &tool_calls {
+                step_number += 1;
+
+                let tool_name = &tool_call.fn_name;
+                let params: Value = tool_call.fn_arguments.clone();
+
+                self.logger.info(run_id, format!("Executing tool: {} with params: {}", tool_name, params));
+
+                // Create step record
+                let mut step = RunStep::new(
+                    run_id.clone(),
+                    step_number as i32,
+                    tool_name.clone(),
+                    params.clone(),
+                );
+
+                // Log step start
+                self.logger.step(&step);
+
+                let start = std::time::Instant::now();
+
+                // Execute the tool
+                let result = match self.registry.execute(tool_name, params, &ctx).await {
+                    Ok(r) => r,
+                    Err(e) => ToolResult::error(format!("Tool execution error: {}", e)),
+                };
+
+                let duration_ms = start.elapsed().as_millis() as i64;
+
+                // Update step with result
+                step.complete(
+                    result.success,
+                    result.content.clone(),
+                    result.error.clone(),
+                    duration_ms,
+                );
+
+                // Take screenshot after action (if browser tool)
+                if is_browser_tool(tool_name) {
+                    if let Ok(screenshot) = self.browser.screenshot().await {
+                        step.screenshot = Some(screenshot);
+                    }
+                }
+
+                // Log step completion
+                self.logger.update_step(&step);
+
+                // Log result
+                if result.success {
+                    self.logger.debug(run_id, format!("Tool {} succeeded: {:?}", tool_name, result.content));
+                } else {
+                    self.logger.warn(run_id, format!("Tool {} failed: {:?}", tool_name, result.error));
+                }
+
+                // Build tool response
+                let response_content = if result.success {
+                    json!({
+                        "success": true,
+                        "content": result.content,
+                        "data": result.data
+                    })
+                } else {
+                    json!({
+                        "success": false,
+                        "error": result.error
+                    })
+                };
+
+                tool_responses.push(ToolResponse::new(
+                    tool_call.call_id.clone(),
+                    response_content.to_string(),
+                ));
+
+                // Check if done
+                if result.is_done {
+                    is_done = true;
+                    let status = if result.success {
+                        RunStatus::Completed
+                    } else {
+                        RunStatus::Failed
+                    };
+                    self.logger.status(run_id, status, result.error.clone());
+                }
+            }
+
+            if is_done {
+                self.logger.info(run_id, "Task completed via done tool");
+                break;
+            }
+
+            // Append tool calls and responses to chat history
+            chat_req = chat_req.append_message(tool_calls);
+            for response in tool_responses {
+                chat_req = chat_req.append_message(response);
+            }
+
+            // Add current page state with screenshot for next iteration
+            let page_state = self.build_page_state_message().await;
+            chat_req = chat_req.append_message(page_state);
+        }
+
+        Ok(())
+    }
+
+    /// Convert our tool definitions to genai Tool format
+    fn build_genai_tools(&self) -> Vec<Tool> {
+        self.registry
+            .definitions()
+            .into_iter()
+            .map(|def| {
+                Tool::new(&def.name)
+                    .with_description(&def.description)
+                    .with_schema(def.parameters)
+            })
+            .collect()
+    }
+
+    /// Build a user message with text and optional screenshot
+    async fn build_user_message_with_screenshot(&self, text: &str) -> ChatMessage {
+        let mut parts = vec![ContentPart::from_text(text)];
+
+        // Try to take a screenshot
+        if let Ok(screenshot_base64) = self.browser.screenshot().await {
+            // Add screenshot as binary content
+            parts.push(ContentPart::from_binary_base64(
+                "image/png",
+                screenshot_base64,
+                Some("screenshot.png".to_string()),
+            ));
+        }
+
+        ChatMessage::user(parts)
+    }
+
+    /// Build a follow-up message with current page state
+    async fn build_page_state_message(&self) -> ChatMessage {
+        let url = self.browser.current_url().await.unwrap_or_default();
+        let text = format!("Current page: {}\n\nWhat action should be taken next?", url);
+        self.build_user_message_with_screenshot(&text).await
+    }
+}
+
+/// Check if a tool interacts with the browser (for screenshot capture)
+fn is_browser_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "search_google"
+            | "go_to_url"
+            | "go_back"
+            | "click_element"
+            | "input_text"
+            | "scroll_down"
+            | "scroll_up"
+            | "send_keys"
+            | "select_dropdown_option"
+            | "execute_javascript"
+    )
+}

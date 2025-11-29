@@ -1,0 +1,48 @@
+[package]
+name = "tasker-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "Rust sidecar for Tasker browser automation"
+
+[dependencies]
+# Web framework (API server)
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# WebSocket
+futures-util = "0.3"
+
+# Browser automation (CDP - Chrome DevTools Protocol)
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+
+# LLM providers (unified API for Claude, OpenAI, Gemini)
+genai = "0.4"
+
+# Image processing (screenshots)
+image = "0.25"
+base64 = "0.22"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
+anyhow = "1.0"
+dashmap = "6.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+regex = "1.10"
+dotenvy = "0.15"
+async-trait = "0.1"
+urlencoding = "2.1"
+
+# Local config (read API keys from Tauri's database)
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5.0"
+
+[dev-dependencies]
+tokio-test = "0.4"

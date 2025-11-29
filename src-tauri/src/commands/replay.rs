@@ -1,0 +1,167 @@
+use crate::sidecar::SidecarManager;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StartReplayRequest {
+    pub workflow: serde_json::Value,
+    pub use_ai: Option<bool>,
+    pub llm_provider: Option<String>,
+    pub llm_model: Option<String>,
+    pub llm_api_key: Option<String>,
+    pub task_description: Option<String>,
+    pub variables: Option<HashMap<String, serde_json::Value>>,
+    pub iterations: Option<i32>,
+    pub headless: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReplayResponse {
+    pub session_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReplayStatusResponse {
+    pub session_id: String,
+    pub status: String,
+    pub step_count: i32,
+    pub current_step: i32,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProvidersResponse {
+    pub providers: HashMap<String, Vec<String>>,
+}
+
+#[tauri::command]
+pub async fn get_llm_providers() -> Result<ProvidersResponse, String> {
+    // Ensure sidecar is running
+    if !SidecarManager::is_running().await {
+        SidecarManager::start().await?;
+    }
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/providers", SidecarManager::base_url());
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get providers: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err("Failed to get providers".to_string());
+    }
+
+    let result: ProvidersResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse, String> {
+    // Ensure sidecar is running
+    if !SidecarManager::is_running().await {
+        SidecarManager::start().await?;
+    }
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/replay/start", SidecarManager::base_url());
+
+    // Transform workflow to match sidecar's expected format
+    let mut workflow = request.workflow.clone();
+    if let Some(obj) = workflow.as_object_mut() {
+        // Convert variables from array to map format
+        if let Some(vars_array) = obj.get("variables").and_then(|v| v.as_array()) {
+            let vars_map: HashMap<String, serde_json::Value> = vars_array
+                .iter()
+                .filter_map(|v| {
+                    let name = v.get("name")?.as_str()?;
+                    let default = v.get("default_value").cloned().unwrap_or(serde_json::Value::Null);
+                    Some((name.to_string(), default))
+                })
+                .collect();
+            obj.insert("variables".to_string(), serde_json::to_value(vars_map).unwrap());
+        }
+    }
+
+    let body = serde_json::json!({
+        "workflow": workflow,
+        "use_ai": request.use_ai.unwrap_or(false),
+        "llm_provider": request.llm_provider.unwrap_or_else(|| "gemini".to_string()),
+        "llm_model": request.llm_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
+        "llm_api_key": request.llm_api_key,
+        "task_description": request.task_description,
+        "variables": request.variables.unwrap_or_default(),
+        "iterations": request.iterations.unwrap_or(1),
+        "headless": request.headless.unwrap_or(false),
+    });
+
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to start replay: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(format!("Replay failed: {}", error_text));
+    }
+
+    let result: ReplayResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn stop_replay(session_id: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/replay/{}/stop", SidecarManager::base_url(), session_id);
+
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to stop replay: {}", e))?;
+
+    Ok(response.status().is_success())
+}
+
+#[tauri::command]
+pub async fn get_replay_status(session_id: String) -> Result<ReplayStatusResponse, String> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/replay/{}/status",
+        SidecarManager::base_url(),
+        session_id
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get status: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err("Session not found".to_string());
+    }
+
+    let result: ReplayStatusResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(result)
+}

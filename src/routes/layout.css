@@ -1,0 +1,90 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+/* Neubrutalist Design System */
+@theme {
+	--color-brutal-yellow: #FFDE59;
+	--color-brutal-cyan: #00D4FF;
+	--color-brutal-magenta: #FF6B9D;
+	--color-brutal-lime: #C4FF61;
+	--color-brutal-green: #4ADE80;
+	--color-brutal-orange: #FF914D;
+	--color-brutal-purple: #B28DFF;
+	--color-brutal-bg: #F0EBE3;
+}
+
+/* Base styles */
+body {
+	font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+	background: var(--color-brutal-bg);
+}
+
+/* Neubrutalist utilities */
+.brutal-shadow {
+	box-shadow: 4px 4px 0 0 #000;
+}
+
+.brutal-shadow-lg {
+	box-shadow: 6px 6px 0 0 #000;
+}
+
+.brutal-shadow-sm {
+	box-shadow: 2px 2px 0 0 #000;
+}
+
+/* Neubrutalist button */
+.btn-brutal {
+	@apply px-5 py-2.5 font-bold border-3 border-black transition-all duration-150 cursor-pointer;
+	box-shadow: 4px 4px 0 0 #000;
+}
+
+.btn-brutal:hover {
+	transform: translate(-2px, -2px);
+	box-shadow: 6px 6px 0 0 #000;
+}
+
+.btn-brutal:active {
+	transform: translate(2px, 2px);
+	box-shadow: 2px 2px 0 0 #000;
+}
+
+/* Neubrutalist card */
+.card-brutal {
+	@apply bg-white border-3 border-black;
+	box-shadow: 4px 4px 0 0 #000;
+	transition: all 0.15s ease;
+}
+
+.card-brutal:hover {
+	box-shadow: 6px 6px 0 0 #000;
+	transform: translate(-2px, -2px);
+}
+
+/* Neubrutalist input */
+.input-brutal {
+	@apply w-full px-4 py-3 border-3 border-black bg-white font-medium;
+	box-shadow: 3px 3px 0 0 #000;
+}
+
+.input-brutal:focus {
+	@apply outline-none ring-0;
+	box-shadow: 5px 5px 0 0 #000;
+	transform: translate(-1px, -1px);
+}
+
+/* Marquee animation for fun */
+@keyframes marquee {
+	0% { transform: translateX(0); }
+	100% { transform: translateX(-50%); }
+}
+
+/* Slow spin for loading gear */
+@keyframes spin-slow {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+	animation: spin-slow 3s linear infinite;
+}
