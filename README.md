@@ -107,9 +107,9 @@ tasker/
 
 Add your LLM API key in Settings. Supported providers:
 
-- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus
-- **OpenAI** - GPT-4o, GPT-4 Turbo
-- **Google** - Gemini 1.5 Pro
+- **Anthropic**
+- **OpenAI**
+- **Google**
 
 ## Contributing
 
