@@ -1,38 +1,95 @@
-# sv
+# Tasker
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+**Open-source agent builder to automate anything.**
 
-## Creating a project
+Record a task as a template. Feed it into Tasker with additional instructions and watch magic happen.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## How It Works
 
-```sh
-# create a new project in the current directory
-npx sv create
+1. **Record** - Click "Start Recording" and perform the task you want to automate in Chrome
+2. **Save** - Stop recording to save your workflow as a reusable template
+3. **Run** - Execute the workflow with AI that adapts to dynamic content
 
-# create a new project in my-app
-npx sv create my-app
+## Features
+
+- **Visual Recording** - No code required. Just click, type, and interact naturally
+- **AI-Powered Execution** - LLMs understand context and adapt to page changes
+- **Multi-Provider** - Works with Claude, OpenAI, or Gemini
+- **Desktop App** - Native performance with Tauri (Windows, macOS, Linux)
+
+## Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) (or Node.js)
+- [Rust](https://rustup.rs/)
+- Chrome/Chromium browser
+- API key for Claude, OpenAI, or Gemini
+
+### Installation
+
+```bash
+# Clone the repo
+git clone https://github.com/pitalco/tasker.git
+cd tasker
+
+# Install dependencies
+bun install
+
+# Build the sidecar
+cd tasker-sidecar
+cargo build --release
+cd ..
+
+# Run in development mode
+bun run tauri dev
 ```
 
-## Developing
+### Building for Production
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+```bash
+bun run tauri build
 ```
 
-## Building
+## Project Structure
 
-To create a production version of your app:
-
-```sh
-npm run build
+```
+tasker/
+├── src/                    # SvelteKit frontend
+│   ├── routes/             # Pages (record, workflows, settings)
+│   └── lib/                # Components and services
+├── src-tauri/              # Tauri backend (Rust)
+└── tasker-sidecar/         # Browser automation engine (Rust)
+    ├── src/
+    │   ├── api/            # HTTP/WebSocket server
+    │   ├── browser/        # Chrome automation (CDP)
+    │   ├── recording/      # Workflow recording
+    │   ├── replay/         # Workflow replay
+    │   └── runs/           # AI execution
+    └── tests/              # Integration tests
 ```
 
-You can preview the production build with `npm run preview`.
+## Tech Stack
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+| Layer | Technology |
+|-------|------------|
+| Frontend | SvelteKit 2, Tailwind CSS |
+| Desktop | Tauri 2 |
+| Automation | Rust, chromiumoxide (CDP) |
+| AI | Claude, OpenAI, Gemini via genai |
+
+## Configuration
+
+Add your LLM API key in Settings. Supported providers:
+
+- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus
+- **OpenAI** - GPT-4o, GPT-4 Turbo
+- **Google** - Gemini 1.5 Pro
+
+## Contributing
+
+Contributions welcome! Please read our contributing guidelines before submitting PRs.
+
+## License
+
+Tasker is open source for personal and non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE) for details.
