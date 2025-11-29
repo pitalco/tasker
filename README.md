@@ -131,4 +131,4 @@ Contributions welcome! Please read our contributing guidelines before submitting
 
 ## License
 
-Tasker is open source for personal and non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE) for details.
+MIT - See [LICENSE](LICENSE) for details.
