@@ -40,109 +40,156 @@ struct CapturedEvent {
     placeholder: Option<String>,
     #[serde(default)]
     input_type: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    href: Option<String>,
 }
 
 /// JavaScript for injecting recording listeners into the page
-/// Uses CDP binding (__taskerCaptureEvent) to push events instantly - NO POLLING!
+/// SIMPLE version - capture what matters for replay
 const RECORDING_SCRIPT: &str = r#"
 (() => {
     if (window.__taskerRecording) return true;
     window.__taskerRecording = true;
-    window.__taskerPaused = false;
 
-    // Send event directly to Rust via CDP binding (instant, no polling!)
-    function sendEvent(event) {
-        if (window.__taskerPaused) return;
-        if (typeof __taskerCaptureEvent === 'function') {
-            __taskerCaptureEvent(JSON.stringify(event));
+    // Track what we've sent to avoid duplicates
+    let lastSentValue = new Map();
+
+    // Send event to Rust via CDP binding
+    function send(event) {
+        try {
+            if (typeof __taskerCaptureEvent === 'function') {
+                __taskerCaptureEvent(JSON.stringify(event));
+                console.log('[Tasker]', event.type, event);
+            }
+        } catch (e) {
+            console.error('[Tasker] Error:', e);
         }
     }
 
-    // Helper to build selector with multiple strategies
+    // Simple selector
     function getSelector(el) {
+        if (!el) return null;
         if (el.id) return '#' + el.id;
-        if (el.getAttribute('data-testid')) return `[data-testid="${el.getAttribute('data-testid')}"]`;
         if (el.name) return `[name="${el.name}"]`;
-        if (el.className && typeof el.className === 'string') {
-            const classes = el.className.split(' ').filter(c => c && !c.includes(' ')).slice(0, 2);
-            if (classes.length) return el.tagName.toLowerCase() + '.' + classes.join('.');
+        if (el.className && typeof el.className === 'string' && el.className.trim()) {
+            return el.tagName.toLowerCase() + '.' + el.className.trim().split(/\s+/)[0];
         }
         return el.tagName.toLowerCase();
     }
 
-    // Helper to get element hints for AI
-    function getElementHints(el) {
-        return {
-            tag_name: el.tagName.toLowerCase(),
-            aria_label: el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || null,
-            placeholder: el.placeholder || null,
-            input_type: el.type || null
-        };
+    // Get text from element
+    function getText(el) {
+        if (!el) return '';
+        return (el.innerText || el.textContent || el.value || '').slice(0, 100).trim();
     }
 
-    // Track clicks - instant push
+    // Send input value if changed
+    function sendInputValue(el, reason) {
+        if (!el || el.type === 'password') return;
+        if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return;
+
+        const selector = getSelector(el);
+        const value = el.value;
+
+        // Only send if value changed from last sent
+        if (lastSentValue.get(selector) === value) return;
+        lastSentValue.set(selector, value);
+
+        send({
+            type: 'type',
+            value: value,
+            selector: selector,
+            placeholder: el.placeholder || null,
+            tag_name: el.tagName.toLowerCase(),
+            timestamp: Date.now()
+        });
+        console.log('[Tasker] Input captured (' + reason + '):', value);
+    }
+
+    // CLICK - capture immediately, but first flush any pending input
     document.addEventListener('click', (e) => {
+        // If clicking away from an input, capture its value first
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+            sendInputValue(active, 'before-click');
+        }
+
         const el = e.target;
-        const hints = getElementHints(el);
-        sendEvent({
+        send({
             type: 'click',
-            x: e.clientX,
-            y: e.clientY,
+            x: Math.round(e.pageX),
+            y: Math.round(e.pageY),
             selector: getSelector(el),
-            text: (el.textContent || el.value || el.alt || '').slice(0, 100).trim(),
-            timestamp: Date.now(),
-            ...hints
+            text: getText(el),
+            tag_name: el.tagName.toLowerCase(),
+            timestamp: Date.now()
         });
     }, true);
 
-    // Track input changes (debounced to avoid spam)
-    let inputTimeout = null;
+    // INPUT - track changes but debounce
+    let inputTimer = null;
     document.addEventListener('input', (e) => {
         const el = e.target;
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-            clearTimeout(inputTimeout);
-            inputTimeout = setTimeout(() => {
-                const hints = getElementHints(el);
-                sendEvent({
-                    type: 'type',
-                    value: el.value,
-                    selector: getSelector(el),
-                    timestamp: Date.now(),
-                    ...hints
-                });
-            }, 300);  // 300ms debounce (reduced from 500ms)
+            clearTimeout(inputTimer);
+            inputTimer = setTimeout(() => sendInputValue(el, 'debounce'), 800);
         }
     }, true);
 
-    // Track select changes - instant push
-    document.addEventListener('change', (e) => {
-        const el = e.target;
-        if (el.tagName === 'SELECT') {
-            const hints = getElementHints(el);
-            const selectedOption = el.options[el.selectedIndex];
-            sendEvent({
-                type: 'select',
-                value: el.value,
-                text: selectedOption ? selectedOption.text : el.value,
-                selector: getSelector(el),
-                timestamp: Date.now(),
-                ...hints
-            });
-        }
+    // BLUR - capture final value when leaving field
+    document.addEventListener('blur', (e) => {
+        clearTimeout(inputTimer);
+        sendInputValue(e.target, 'blur');
     }, true);
 
-    // Track keyboard events (Enter, Tab, etc.) - instant push
+    // KEYDOWN - handle Enter, Tab (these often trigger actions)
     document.addEventListener('keydown', (e) => {
-        const specialKeys = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete'];
-        if (specialKeys.includes(e.key)) {
-            sendEvent({
+        const el = e.target;
+
+        // Enter or Tab in an input - capture value FIRST, then the keypress
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                clearTimeout(inputTimer);
+                sendInputValue(el, 'before-' + e.key.toLowerCase());
+            }
+
+            send({
                 type: 'keypress',
                 value: e.key,
+                selector: getSelector(el),
+                tag_name: el.tagName ? el.tagName.toLowerCase() : null,
                 timestamp: Date.now()
             });
         }
     }, true);
 
+    // SELECT - capture changes
+    document.addEventListener('change', (e) => {
+        const el = e.target;
+        if (el.tagName === 'SELECT') {
+            const opt = el.options[el.selectedIndex];
+            send({
+                type: 'select',
+                value: el.value,
+                text: opt ? opt.text : el.value,
+                selector: getSelector(el),
+                tag_name: 'select',
+                timestamp: Date.now()
+            });
+        }
+    }, true);
+
+    // BEFORE UNLOAD - last chance to capture any pending input
+    window.addEventListener('beforeunload', () => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+            sendInputValue(active, 'beforeunload');
+        }
+    });
+
+    console.log('[Tasker] Recording ready');
     return true;
 })()
 "#;
@@ -204,7 +251,8 @@ impl BrowserRecorder {
         // Store session
         *self.session.lock().await = Some(session.clone());
 
-        // Launch browser (incognito by default for clean sessions requiring login)
+        // Launch browser to about:blank first (incognito by default for clean sessions)
+        // This allows us to set up recording BEFORE the target page loads
         self.browser
             .launch_with_options(start_url, headless, Some(viewport), incognito)
             .await?;
@@ -215,16 +263,16 @@ impl BrowserRecorder {
             .await?;
 
         // Register script to run on EVERY new document (survives navigations!)
-        // This is critical - without this, clicks that cause navigation won't be recorded
+        // This will auto-inject when we navigate to the target URL
         self.browser.add_script_on_new_document(RECORDING_SCRIPT).await?;
 
-        // Also run immediately on current page
-        self.browser.evaluate(RECORDING_SCRIPT).await?;
-
-        tracing::info!("Recording started: {} (using CDP event binding with navigation persistence)", session_id);
-
-        // Start event listener in background (instant, no polling!)
+        // Start event listener in background
         self.spawn_event_listener(event_stream);
+
+        // NOW navigate to target URL - recording script will auto-inject as page loads
+        self.browser.navigate(start_url).await?;
+
+        tracing::info!("Recording started: {} (script injected before page load)", session_id);
 
         Ok(session)
     }
@@ -503,6 +551,12 @@ async fn create_step_from_event(
             if let Some(aria) = &event.aria_label {
                 options.insert("aria_label".to_string(), serde_json::Value::String(aria.clone()));
             }
+            if let Some(role) = &event.role {
+                options.insert("role".to_string(), serde_json::Value::String(role.clone()));
+            }
+            if let Some(href) = &event.href {
+                options.insert("href".to_string(), serde_json::Value::String(href.clone()));
+            }
             if !text.is_empty() {
                 options.insert("element_text".to_string(), serde_json::Value::String(text));
             }
@@ -588,13 +642,23 @@ async fn create_step_from_event(
             let key = event.value.clone().unwrap_or_default();
             let name = format!("Press {}", key);
 
+            // Include target element selector if available
+            let selector = event.selector.as_ref().map(|s| ElementSelector {
+                strategy: SelectorStrategy::Css,
+                value: s.clone(),
+                fallback_selectors: vec![],
+            });
+
             let mut options = std::collections::HashMap::new();
             options.insert("key".to_string(), serde_json::Value::String(key.clone()));
+            if let Some(tag) = &event.tag_name {
+                options.insert("tag_name".to_string(), serde_json::Value::String(tag.clone()));
+            }
 
             (
                 BrowserAction {
                     action_type: ActionType::Custom,
-                    selector: None,
+                    selector,
                     value: Some(key),
                     url: None,
                     coordinates: None,

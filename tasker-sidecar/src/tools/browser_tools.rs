@@ -155,13 +155,13 @@ impl Tool for ClickTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "click_element".to_string(),
-            description: "Click on a page element identified by index from the element list".to_string(),
+            description: "Click on a page element identified by index from the interactive elements list".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "index": {
                         "type": "integer",
-                        "description": "The index of the element to click from the interactive elements list"
+                        "description": "The 1-based index of the element to click (e.g., [1], [2], [3])"
                     }
                 },
                 "required": ["index"]
@@ -172,28 +172,36 @@ impl Tool for ClickTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let index = params["index"]
             .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
 
-        // Use data-element-index attribute for indexed clicking
-        let selector = format!("[data-element-index='{}']", index);
+        // Look up selector from indexed elements
+        let indexed = ctx.indexed_elements.read().await;
+        let selector = match indexed.get_selector(index) {
+            Some(s) => s.to_string(),
+            None => return Ok(ToolResult::error(format!(
+                "Element index {} not found. Valid indices: 1-{}",
+                index, indexed.elements.len()
+            ))),
+        };
+        drop(indexed); // Release read lock before async operations
 
         match ctx.browser.click(&selector).await {
-            Ok(()) => Ok(ToolResult::success(format!("Clicked element at index {}", index))),
+            Ok(()) => Ok(ToolResult::success(format!("Clicked element [{}]", index))),
             Err(e) => {
-                // Try alternative: click by element coordinates via JS
+                // Try alternative: click via JavaScript
                 let script = format!(
                     r#"
-                    const el = document.querySelector("[data-element-index='{}']");
+                    const el = document.querySelector('{}');
                     if (el) {{ el.click(); return 'clicked'; }}
                     return 'not found';
                     "#,
-                    index
+                    selector.replace('\'', "\\'")
                 );
                 match ctx.browser.evaluate(&script).await {
                     Ok(result) if result.as_str() == Some("clicked") => {
-                        Ok(ToolResult::success(format!("Clicked element at index {}", index)))
+                        Ok(ToolResult::success(format!("Clicked element [{}]", index)))
                     }
-                    _ => Ok(ToolResult::error(format!("Failed to click element {}: {}", index, e)))
+                    _ => Ok(ToolResult::error(format!("Failed to click element [{}]: {}", index, e)))
                 }
             }
         }
@@ -208,13 +216,13 @@ impl Tool for InputTextTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "input_text".to_string(),
-            description: "Type text into an input field identified by index".to_string(),
+            description: "Type text into an input field identified by index. Clears existing content first.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "index": {
                         "type": "integer",
-                        "description": "The index of the input element"
+                        "description": "The 1-based index of the input element (e.g., [1], [2], [3])"
                     },
                     "text": {
                         "type": "string",
@@ -229,20 +237,29 @@ impl Tool for InputTextTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let index = params["index"]
             .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
         let text = params["text"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'text' parameter"))?;
 
-        let selector = format!("[data-element-index='{}']", index);
+        // Look up selector from indexed elements
+        let indexed = ctx.indexed_elements.read().await;
+        let selector = match indexed.get_selector(index) {
+            Some(s) => s.to_string(),
+            None => return Ok(ToolResult::error(format!(
+                "Element index {} not found. Valid indices: 1-{}",
+                index, indexed.elements.len()
+            ))),
+        };
+        drop(indexed);
 
         match ctx.browser.type_text(&selector, text).await {
             Ok(()) => Ok(ToolResult::success(format!(
-                "Typed '{}' into element at index {}",
+                "Typed '{}' into element [{}]",
                 text, index
             ))),
             Err(e) => Ok(ToolResult::error(format!(
-                "Failed to type into element {}: {}",
+                "Failed to type into element [{}]: {}",
                 index, e
             )))
         }
@@ -263,12 +280,12 @@ impl Tool for ScrollTool {
                 "properties": {
                     "amount": {
                         "type": "integer",
-                        "description": "Pixels to scroll (positive = down, negative = up). Default is one viewport height.",
-                        "default": null
+                        "description": "Pixels to scroll down. Default is 500.",
+                        "default": 500
                     },
                     "to_element": {
                         "type": "integer",
-                        "description": "Index of element to scroll into view (alternative to amount)"
+                        "description": "1-based index of element to scroll into view (alternative to amount)"
                     }
                 },
                 "required": []
@@ -278,25 +295,37 @@ impl Tool for ScrollTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         if let Some(index) = params["to_element"].as_i64() {
+            let index = index as i32;
+            // Look up selector from indexed elements
+            let indexed = ctx.indexed_elements.read().await;
+            let selector = match indexed.get_selector(index) {
+                Some(s) => s.to_string(),
+                None => return Ok(ToolResult::error(format!(
+                    "Element index {} not found. Valid indices: 1-{}",
+                    index, indexed.elements.len()
+                ))),
+            };
+            drop(indexed);
+
             // Scroll element into view
             let script = format!(
                 r#"
-                const el = document.querySelector("[data-element-index='{}']");
+                const el = document.querySelector('{}');
                 if (el) {{ el.scrollIntoView({{ behavior: 'smooth', block: 'center' }}); return 'scrolled'; }}
                 return 'not found';
                 "#,
-                index
+                selector.replace('\'', "\\'")
             );
             ctx.browser.evaluate(&script).await?;
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-            return Ok(ToolResult::success(format!("Scrolled to element at index {}", index)));
+            return Ok(ToolResult::success(format!("Scrolled to element [{}]", index)));
         }
 
         let amount = params["amount"].as_i64().unwrap_or(500);
         ctx.browser.scroll(0, amount as i32).await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
-        Ok(ToolResult::success(format!("Scrolled by {} pixels", amount)))
+        Ok(ToolResult::success(format!("Scrolled down {} pixels", amount)))
     }
 }
 
@@ -538,13 +567,13 @@ impl Tool for SelectDropdownTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "select_dropdown_option".to_string(),
-            description: "Select an option from a dropdown menu by index or value".to_string(),
+            description: "Select an option from a dropdown menu by index and option value/text".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "index": {
                         "type": "integer",
-                        "description": "The index of the dropdown element"
+                        "description": "The 1-based index of the dropdown element (e.g., [1], [2], [3])"
                     },
                     "option": {
                         "type": "string",
@@ -559,16 +588,26 @@ impl Tool for SelectDropdownTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let index = params["index"]
             .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
         let option = params["option"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'option' parameter"))?;
 
-        let selector = format!("[data-element-index='{}']", index);
+        // Look up selector from indexed elements
+        let indexed = ctx.indexed_elements.read().await;
+        let selector = match indexed.get_selector(index) {
+            Some(s) => s.to_string(),
+            None => return Ok(ToolResult::error(format!(
+                "Element index {} not found. Valid indices: 1-{}",
+                index, indexed.elements.len()
+            ))),
+        };
+        drop(indexed);
+
         ctx.browser.select(&selector, option).await?;
 
         Ok(ToolResult::success(format!(
-            "Selected option '{}' in dropdown at index {}",
+            "Selected option '{}' in dropdown [{}]",
             option, index
         )))
     }
@@ -588,7 +627,7 @@ impl Tool for GetDropdownOptionsTool {
                 "properties": {
                     "index": {
                         "type": "integer",
-                        "description": "The index of the dropdown element"
+                        "description": "The 1-based index of the dropdown element"
                     }
                 },
                 "required": ["index"]
@@ -599,25 +638,36 @@ impl Tool for GetDropdownOptionsTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         let index = params["index"]
             .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
+
+        // Look up selector from indexed elements
+        let indexed = ctx.indexed_elements.read().await;
+        let selector = match indexed.get_selector(index) {
+            Some(s) => s.to_string(),
+            None => return Ok(ToolResult::error(format!(
+                "Element index {} not found. Valid indices: 1-{}",
+                index, indexed.elements.len()
+            ))),
+        };
+        drop(indexed);
 
         let script = format!(
             r#"
-            const el = document.querySelector("[data-element-index='{}']");
+            const el = document.querySelector('{}');
             if (!el || el.tagName !== 'SELECT') return JSON.stringify([]);
             return JSON.stringify(Array.from(el.options).map(o => ({{ value: o.value, text: o.text, selected: o.selected }})));
             "#,
-            index
+            selector.replace('\'', "\\'")
         );
 
         let result = ctx.browser.evaluate(&script).await?;
         let options: Vec<Value> = serde_json::from_str(result.as_str().unwrap_or("[]")).unwrap_or_default();
 
         if options.is_empty() {
-            Ok(ToolResult::error(format!("No dropdown found at index {} or no options available", index)))
+            Ok(ToolResult::error(format!("No dropdown found at index [{}] or no options available", index)))
         } else {
             Ok(ToolResult::success_with_data(
-                format!("Found {} options in dropdown", options.len()),
+                format!("Found {} options in dropdown [{}]", options.len(), index),
                 json!({ "options": options })
             ))
         }

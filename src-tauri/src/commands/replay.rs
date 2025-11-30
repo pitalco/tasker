@@ -2,13 +2,12 @@ use crate::sidecar::SidecarManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Request to start a replay - AI agent is ALWAYS used
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartReplayRequest {
     pub workflow: serde_json::Value,
-    pub use_ai: Option<bool>,
     pub llm_provider: Option<String>,
     pub llm_model: Option<String>,
-    pub llm_api_key: Option<String>,
     pub task_description: Option<String>,
     pub variables: Option<HashMap<String, serde_json::Value>>,
     pub iterations: Option<i32>,
@@ -92,10 +91,8 @@ pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse,
 
     let body = serde_json::json!({
         "workflow": workflow,
-        "use_ai": request.use_ai.unwrap_or(false),
-        "llm_provider": request.llm_provider.unwrap_or_else(|| "gemini".to_string()),
-        "llm_model": request.llm_model.unwrap_or_else(|| "gemini-2.5-flash".to_string()),
-        "llm_api_key": request.llm_api_key,
+        "llm_provider": request.llm_provider.unwrap_or_else(|| "google".to_string()),
+        "llm_model": request.llm_model.unwrap_or_else(|| "gemini-3-pro-preview".to_string()),
         "task_description": request.task_description,
         "variables": request.variables.unwrap_or_default(),
         "iterations": request.iterations.unwrap_or(1),

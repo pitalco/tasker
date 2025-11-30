@@ -34,10 +34,9 @@
 	let statusPolling = $state<ReturnType<typeof setInterval> | null>(null);
 	let results = $state<Array<{ step_id: string; success: boolean; error?: string }>>([]);
 
-	// Settings
-	let useAI = $state(true);
-	let llmProvider = $state('gemini');
-	let llmModel = $state('gemini-2.5-flash');
+	// Settings - AI is ALWAYS used, recorded steps are hints
+	let llmProvider = $state('google');
+	let llmModel = $state('gemini-3-pro-preview');
 	let iterations = $state(1);
 	let headless = $state(false);
 	let taskDescription = $state('');
@@ -119,10 +118,8 @@
 
 			const response = await startReplay({
 				workflow,
-				use_ai: useAI,
 				llm_provider: llmProvider,
 				llm_model: llmModel,
-				llm_api_key: getApiKeyForProvider(),
 				task_description: taskDescription || undefined,
 				iterations,
 				headless
@@ -256,7 +253,7 @@
 		</div>
 	{:else if !isRunning}
 		<!-- No API Keys Warning -->
-		{#if useAI && !hasAnyKeys && availableProviders.length === 0}
+		{#if !hasAnyKeys && availableProviders.length === 0}
 			<div class="bg-brutal-yellow border-3 border-black p-4" style="box-shadow: 4px 4px 0 0 #000;">
 				<div class="flex items-start gap-3">
 					<svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
@@ -265,7 +262,7 @@
 					<div>
 						<p class="font-bold text-black">No API keys configured</p>
 						<p class="text-sm text-black/80 mt-1">
-							Configure API keys in Settings to use LLM providers.
+							AI agent requires an API key. Configure API keys in Settings.
 						</p>
 						<a href="/settings" class="inline-block mt-3 btn-brutal bg-white text-black text-sm py-2">
 							GO TO SETTINGS
@@ -280,25 +277,12 @@
 			<div class="card-brutal p-0 overflow-hidden">
 				<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
 				<div class="p-6 space-y-6">
-					<h2 class="text-xl font-bold text-black">SETTINGS</h2>
+					<h2 class="text-xl font-bold text-black">AI AGENT SETTINGS</h2>
+					<p class="text-sm text-black/60 font-medium -mt-4">
+						AI uses recorded steps as hints, adapting to page changes
+					</p>
 
-					<!-- AI Toggle -->
-					<div class="flex items-center justify-between">
-						<div>
-							<div class="font-bold text-black">Use AI Agent</div>
-							<div class="text-sm text-black/60 font-medium">AI adapts to page changes</div>
-						</div>
-						<button
-							onclick={() => (useAI = !useAI)}
-							class="w-14 h-8 border-3 border-black transition-all {useAI ? 'bg-brutal-lime' : 'bg-white'}"
-							style="box-shadow: 2px 2px 0 0 #000;"
-						>
-							<div class="w-5 h-5 bg-black transition-transform duration-150 {useAI ? 'translate-x-6' : 'translate-x-1'}"></div>
-						</button>
-					</div>
-
-					{#if useAI}
-						<!-- LLM Provider -->
+					<!-- LLM Provider -->
 						<div>
 							<label class="block text-sm font-bold text-black uppercase mb-2">LLM Provider</label>
 							<div class="grid grid-cols-2 gap-2">
@@ -345,15 +329,14 @@
 						</div>
 
 						<!-- Task Description -->
-						<div>
-							<label class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
-							<textarea
-								bind:value={taskDescription}
-								placeholder="Add any specific instructions for the AI..."
-								class="input-brutal h-24 resize-none"
-							></textarea>
-						</div>
-					{/if}
+					<div>
+						<label class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
+						<textarea
+							bind:value={taskDescription}
+							placeholder="Add any specific instructions for the AI..."
+							class="input-brutal h-24 resize-none"
+						></textarea>
+					</div>
 
 					<!-- Iterations -->
 					<div>
@@ -424,7 +407,7 @@
 		<!-- Start Button -->
 		<button
 			onclick={handleStart}
-			disabled={isStarting || (useAI && !hasKeyForCurrentProvider)}
+			disabled={isStarting || !hasKeyForCurrentProvider}
 			class="w-full btn-brutal bg-brutal-lime text-black text-xl py-4 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
 		>
 			{#if isStarting}

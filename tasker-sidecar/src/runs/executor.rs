@@ -3,40 +3,20 @@ use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
 use genai::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
+use crate::agent::UserMessageBuilder;
+use crate::browser::dom::IndexedElements;
 use crate::browser::BrowserManager;
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
 
 use super::logger::RunLogger;
 use super::models::{Run, RunStatus, RunStep};
 
+use crate::llm::prompts::BROWSER_USE_SYSTEM_PROMPT;
+
 const MAX_STEPS: usize = 50;
 const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
-
-/// System prompt for the automation agent
-const SYSTEM_PROMPT: &str = r#"You are a browser automation agent. Your task is to complete web-based tasks by using the available tools.
-
-You will be given:
-1. A task description to complete
-2. Optional hints from a recorded workflow (use as guidance, not strict instructions)
-3. The current page state (URL, screenshot, interactive elements)
-
-Use the available tools to:
-1. Navigate to pages
-2. Click elements
-3. Type text into inputs
-4. Extract information
-5. Complete forms
-
-Important guidelines:
-- Elements are identified by their index from the element list
-- Take screenshots to understand the page state
-- Wait for pages to load after navigation
-- If an action fails, try alternatives
-- Call the 'done' tool when the task is complete
-- Be efficient - don't take unnecessary actions
-
-When you have completed the task or cannot proceed further, call the 'done' tool with a summary."#;
 
 /// Configuration for a run execution
 pub struct ExecutorConfig {
@@ -99,10 +79,14 @@ impl RunExecutor {
             user_prompt.push_str(&format!("\n\nAdditional instructions:\n{}", instructions));
         }
 
+        // Create indexed elements storage (will be updated before each LLM call)
+        let indexed_elements = Arc::new(RwLock::new(IndexedElements::default()));
+
         // Create tool context
         let ctx = ToolContext {
             run_id: run_id.clone(),
             browser: Arc::clone(&self.browser),
+            indexed_elements: Arc::clone(&indexed_elements),
         };
 
         // Set up API key if provided
@@ -117,7 +101,7 @@ impl RunExecutor {
         let tools = self.build_genai_tools();
 
         // Build initial chat request with system prompt
-        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
+        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(BROWSER_USE_SYSTEM_PROMPT)])
             .with_tools(tools);
 
         // Add initial user message with task and screenshot
@@ -262,7 +246,7 @@ impl RunExecutor {
             }
 
             // Add current page state with screenshot for next iteration
-            let page_state = self.build_page_state_message().await;
+            let page_state = self.build_page_state_message(&indexed_elements).await;
             chat_req = chat_req.append_message(page_state);
         }
 
@@ -299,10 +283,25 @@ impl RunExecutor {
         ChatMessage::user(parts)
     }
 
-    /// Build a follow-up message with current page state
-    async fn build_page_state_message(&self) -> ChatMessage {
+    /// Build a follow-up message with current page state using UserMessageBuilder
+    async fn build_page_state_message(&self, indexed_elements: &Arc<RwLock<IndexedElements>>) -> ChatMessage {
         let url = self.browser.current_url().await.unwrap_or_default();
-        let text = format!("Current page: {}\n\nWhat action should be taken next?", url);
+        let title = self.browser.get_title().await.unwrap_or_default();
+
+        // Get indexed elements from page
+        let elements = if let Ok(elems) = self.browser.get_indexed_elements().await {
+            // Update the shared indexed elements
+            *indexed_elements.write().await = elems.clone();
+            elems
+        } else {
+            IndexedElements::default()
+        };
+
+        // Use UserMessageBuilder for formatting
+        let text = UserMessageBuilder::new()
+            .with_browser_state(&url, &title, elements)
+            .build();
+
         self.build_user_message_with_screenshot(&text).await
     }
 }

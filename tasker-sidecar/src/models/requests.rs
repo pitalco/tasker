@@ -21,14 +21,13 @@ fn default_viewport_height() -> i32 {
     720
 }
 
+/// Request to start a replay - AI agent is ALWAYS used
+/// Recorded workflow serves as hints/context for the AI, not strict instructions
 #[derive(Debug, Deserialize)]
 pub struct StartReplayRequest {
     pub workflow: Workflow,
-    #[serde(default)]
-    pub use_ai: bool,
     pub llm_provider: Option<String>,
     pub llm_model: Option<String>,
-    pub llm_api_key: Option<String>,
     pub task_description: Option<String>,
     #[serde(default)]
     pub variables: HashMap<String, serde_json::Value>,

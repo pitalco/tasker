@@ -5,7 +5,6 @@ use tokio::sync::{broadcast, Mutex};
 use crate::agent::WorkflowAgent;
 use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
 use crate::recording::BrowserRecorder;
-use crate::replay::WorkflowExecutor;
 use crate::runs::{Run, RunRepository};
 
 /// WebSocket event types broadcast to clients
@@ -36,41 +35,14 @@ pub struct ActiveRecorder {
     pub session: RecordingSession,
 }
 
-/// Active replay (either direct executor or AI agent)
-pub enum ActiveReplay {
-    Direct {
-        executor: Arc<WorkflowExecutor>,
-        session: ReplaySession,
-    },
-    Agent {
-        agent: Arc<WorkflowAgent>,
-        session: ReplaySession,
-    },
-}
-
-impl ActiveReplay {
-    pub fn session(&self) -> &ReplaySession {
-        match self {
-            ActiveReplay::Direct { session, .. } => session,
-            ActiveReplay::Agent { session, .. } => session,
-        }
-    }
-
-    pub fn session_mut(&mut self) -> &mut ReplaySession {
-        match self {
-            ActiveReplay::Direct { session, .. } => session,
-            ActiveReplay::Agent { session, .. } => session,
-        }
-    }
-}
-
 /// Shared application state
 pub struct AppState {
     /// Active recording sessions: session_id -> recorder
     pub recordings: DashMap<String, ActiveRecorder>,
 
-    /// Active replay sessions: session_id -> replay
-    pub replays: DashMap<String, ActiveReplay>,
+    /// Active AI agent sessions: session_id -> agent
+    /// All replays now go through the AI agent (no mechanical replay)
+    pub active_agents: DashMap<String, Arc<WorkflowAgent>>,
 
     /// Active runs: run_id -> run
     pub active_runs: DashMap<String, Run>,
@@ -104,7 +76,7 @@ impl AppState {
 
         Self {
             recordings: DashMap::new(),
-            replays: DashMap::new(),
+            active_agents: DashMap::new(),
             active_runs: DashMap::new(),
             runs_repository,
             ws_broadcast: tx,

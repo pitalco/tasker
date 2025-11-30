@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use crate::browser::dom::{IndexedElements, InteractiveElement, EXTRACT_ELEMENTS_SCRIPT};
 use crate::models::Viewport;
 
 /// Manages browser lifecycle and page connections
@@ -41,12 +42,13 @@ impl BrowserManager {
     }
 
     /// Launch browser with full options
+    /// Uses the SINGLE default page that Chrome creates - no extra windows
     pub async fn launch_with_options(
         &self,
-        url: &str,
+        _url: &str,  // URL not used here - caller should call navigate() after setup
         headless: bool,
         viewport: Option<Viewport>,
-        incognito: bool,
+        _incognito: bool,  // Not using incognito - it complicates things
     ) -> Result<()> {
         // Acquire launch lock to prevent race condition (double Chrome instances)
         let _launch_guard = self.launch_lock.lock().await;
@@ -66,23 +68,21 @@ impl BrowserManager {
             config = config.with_head();
         }
 
-        // NOTE: Do NOT use --incognito flag! It creates TWO windows.
-        // Instead, use CDP's browser context API below.
-
-        // Disable automation detection flags for cleaner sessions
-        // Also disable default apps and extensions to prevent extra windows
+        // Clean launch flags - no extra windows, no extensions
         config = config
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--disable-infobars")
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-default-apps")
-            .arg("--disable-extensions");
+            .arg("--disable-extensions")
+            .arg("--disable-popup-blocking")
+            .arg("--disable-background-networking");
 
         let config = config.build().map_err(|e| anyhow!("Failed to build browser config: {}", e))?;
 
-        // Wrap browser launch with 30-second timeout to prevent indefinite hangs
-        let (mut browser, mut handler) = timeout(
+        // Launch browser with timeout
+        let (browser, mut handler) = timeout(
             Duration::from_secs(30),
             Browser::launch(config)
         )
@@ -90,46 +90,26 @@ impl BrowserManager {
         .map_err(|_| anyhow!("Browser launch timeout (30s) - Chrome may not be installed or is unresponsive"))?
         .map_err(|e| anyhow!("Failed to launch browser: {}", e))?;
 
-        // Spawn handler task to process browser events (filter noisy errors)
+        // Spawn handler task
         tokio::spawn(async move {
             while let Some(event) = handler.next().await {
                 tracing::trace!("Browser event: {:?}", event);
             }
         });
 
-        // Minimal delay for Chrome to initialize (reduced from 100ms)
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Small delay for Chrome to fully initialize
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Get default pages BEFORE creating incognito context
-        // We'll close them AFTER creating our target page
-        let default_pages = browser.pages().await.map_err(|e| anyhow!("Failed to get pages: {}", e))?;
-        tracing::debug!("Found {} default page(s) to close later", default_pages.len());
+        // Get the EXISTING default page - don't create a new one!
+        // This is the key fix - Chrome already has one window/tab open
+        let pages = browser.pages().await.map_err(|e| anyhow!("Failed to get pages: {}", e))?;
 
-        // Use CDP's incognito browser context API (NOT the --incognito flag!)
-        // This creates an isolated context without opening extra windows
-        if incognito {
-            tracing::info!("Creating incognito browser context via CDP");
-            browser
-                .start_incognito_context()
-                .await
-                .map_err(|e| anyhow!("Failed to start incognito context: {}", e))?;
-        }
+        let page = pages.into_iter().next()
+            .ok_or_else(|| anyhow!("No default page found"))?;
 
-        // Create page within the context (incognito or default) and navigate
-        let page = browser
-            .new_page(url)
-            .await
-            .map_err(|e| anyhow!("Failed to create page: {}", e))?;
+        tracing::debug!("Using existing default page");
 
-        // NOW close the default pages (after we have our target page)
-        // This prevents having multiple windows visible
-        for default_page in default_pages {
-            if let Err(e) = default_page.close().await {
-                tracing::warn!("Failed to close default page: {}", e);
-            }
-        }
-
-        // Set viewport via emulation
+        // Set viewport
         let emulation_params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
             .width(viewport.width as i64)
             .height(viewport.height as i64)
@@ -142,13 +122,11 @@ impl BrowserManager {
             .await
             .map_err(|e| anyhow!("Failed to set viewport: {}", e))?;
 
-        // No sleep needed - viewport is applied synchronously
         // Store browser and page
         *self.browser.lock().await = Some(browser);
         *self.page.lock().await = Some(page);
 
-        tracing::info!("Browser launched{} and navigated to {}",
-            if incognito { " (incognito context)" } else { "" }, url);
+        tracing::info!("Browser launched (single window)");
         Ok(())
     }
 
@@ -369,6 +347,23 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to parse script result: {}", e))
     }
 
+    /// Get indexed interactive elements from the current page
+    /// Returns elements with 1-based indices for AI interaction
+    pub async fn get_indexed_elements(&self) -> Result<IndexedElements> {
+        let result = self.evaluate(EXTRACT_ELEMENTS_SCRIPT).await?;
+
+        let elements: Vec<InteractiveElement> = serde_json::from_value(result)
+            .map_err(|e| anyhow!("Failed to parse elements: {}", e))?;
+
+        Ok(IndexedElements::new(elements))
+    }
+
+    /// Get current page title
+    pub async fn get_title(&self) -> Result<String> {
+        let result = self.evaluate("document.title").await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
     /// Set up a CDP binding for instant event capture (no polling!)
     /// Returns an event stream that receives EventBindingCalled events
     pub async fn setup_event_binding(&self, binding_name: &str) -> Result<EventStream<EventBindingCalled>> {
@@ -404,6 +399,22 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to add script to evaluate on new document: {}", e))?;
 
         tracing::debug!("Added script to evaluate on every new document");
+        Ok(())
+    }
+
+    /// Bring the browser window to the front (restore from minimized)
+    /// Call this after recording setup is complete so user can start interacting
+    pub async fn bring_to_front(&self) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        page.bring_to_front()
+            .await
+            .map_err(|e| anyhow!("Failed to bring browser to front: {}", e))?;
+
+        tracing::debug!("Browser window brought to front");
         Ok(())
     }
 

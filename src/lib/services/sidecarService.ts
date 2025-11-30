@@ -39,12 +39,11 @@ export interface StartRecordingOptions {
 	viewport_height?: number;
 }
 
+// AI agent is ALWAYS used - recorded workflow serves as hints
 export interface StartReplayOptions {
 	workflow: Workflow;
-	use_ai?: boolean;
 	llm_provider?: string;
 	llm_model?: string;
-	llm_api_key?: string;
 	task_description?: string;
 	variables?: Record<string, unknown>;
 	iterations?: number;

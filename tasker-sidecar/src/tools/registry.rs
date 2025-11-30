@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::browser::BrowserManager;
+use crate::browser::dom::IndexedElements;
 
 /// Tool definition for LLM function calling
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +78,8 @@ impl ToolResult {
 pub struct ToolContext {
     pub run_id: String,
     pub browser: Arc<BrowserManager>,
+    /// Current indexed elements from the page (updated before each LLM turn)
+    pub indexed_elements: Arc<RwLock<IndexedElements>>,
 }
 
 /// Trait for implementing tools
