@@ -339,7 +339,12 @@ impl From<&WorkflowStep> for RecordedAction {
                     timestamp,
                 }
             }
-            ActionType::Extract | ActionType::Hover | ActionType::Custom => {
+            ActionType::Custom => {
+                // Custom is used for keypress events (Enter, Tab, etc.)
+                let key = step.action.value.clone().unwrap_or_default();
+                RecordedAction::send_keys(step.order, &key, timestamp)
+            }
+            ActionType::Extract | ActionType::Hover => {
                 // Fallback for unsupported action types
                 RecordedAction {
                     order: step.order,
