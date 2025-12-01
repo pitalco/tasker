@@ -8,6 +8,8 @@ export interface Workflow {
 	created_at: string;
 	updated_at: string;
 	version: number;
+	/** Task description for text-only workflows - AI figures out how to execute */
+	task_description?: string;
 }
 
 export interface WorkflowStep {
@@ -162,7 +164,7 @@ export interface WorkflowVariable {
 export interface WorkflowMetadata {
 	start_url?: string;
 	llm_provider?: string;
-	recording_source: 'manual' | 'recorded' | 'embedded';
+	recording_source: 'manual' | 'recorded' | 'embedded' | 'text_description';
 }
 
 export interface CreateWorkflowRequest {
@@ -171,6 +173,8 @@ export interface CreateWorkflowRequest {
 	steps?: WorkflowStep[];
 	variables?: WorkflowVariable[];
 	metadata?: WorkflowMetadata;
+	/** Task description for text-only workflows */
+	task_description?: string;
 }
 
 export interface UpdateWorkflowRequest {

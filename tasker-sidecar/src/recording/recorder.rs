@@ -203,6 +203,8 @@ pub struct BrowserRecorder {
     step_sender: broadcast::Sender<WorkflowStep>,
     cancel_sender: broadcast::Sender<()>,
     viewport: Viewport,
+    /// Rolling screenshot state - previous action's "after" becomes current action's "before"
+    last_screenshot: Arc<Mutex<Option<String>>>,
 }
 
 impl BrowserRecorder {
@@ -220,6 +222,7 @@ impl BrowserRecorder {
                 width: 1280,
                 height: 720,
             },
+            last_screenshot: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -284,10 +287,23 @@ impl BrowserRecorder {
         let step_order = Arc::clone(&self.step_order);
         let step_sender = self.step_sender.clone();
         let mut cancel_rx = self.cancel_sender.subscribe();
+        let last_screenshot = Arc::clone(&self.last_screenshot);
 
         tokio::spawn(async move {
             let mut last_url = String::new();
             let mut url_check_count: u32 = 0;
+
+            // Take initial screenshot before any user actions
+            // This becomes the "before" screenshot for the first action
+            match browser.screenshot().await {
+                Ok(initial_screenshot) => {
+                    *last_screenshot.lock().await = Some(initial_screenshot);
+                    tracing::debug!("Captured initial page screenshot for recording");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to capture initial screenshot: {}", e);
+                }
+            }
 
             loop {
                 tokio::select! {
@@ -319,7 +335,26 @@ impl BrowserRecorder {
 
                                 // Parse the event payload (JSON string from JavaScript)
                                 if let Ok(event) = serde_json::from_str::<CapturedEvent>(&binding_event.payload) {
-                                    if let Some(step) = create_step_from_event(&step_order, &event).await {
+                                    if let Some(mut step) = create_step_from_event(&step_order, &event).await {
+                                        // Get "before" screenshot from rolling state
+                                        let screenshot_before = last_screenshot.lock().await.clone();
+                                        step.screenshot_before = screenshot_before;
+
+                                        // Wait a moment for DOM to settle after the action
+                                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+                                        // Capture "after" screenshot
+                                        match browser.screenshot().await {
+                                            Ok(after_screenshot) => {
+                                                step.screenshot_after = Some(after_screenshot.clone());
+                                                // Store as next action's "before"
+                                                *last_screenshot.lock().await = Some(after_screenshot);
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Failed to capture after screenshot: {}", e);
+                                            }
+                                        }
+
                                         // Add to session
                                         let mut session_guard = session.lock().await;
                                         if let Some(ref mut sess) = *session_guard {
@@ -334,7 +369,7 @@ impl BrowserRecorder {
 
                                 // Track URL changes for logging (script auto-injects via addScriptToEvaluateOnNewDocument)
                                 url_check_count += 1;
-                                if url_check_count % 10 == 0 {
+                                if url_check_count.is_multiple_of(10) {
                                     if let Ok(current_url) = browser.current_url().await {
                                         if current_url != last_url && !last_url.is_empty() {
                                             tracing::debug!("Navigation detected: {} -> {}", last_url, current_url);
@@ -444,7 +479,7 @@ impl BrowserRecorder {
         // Convert steps to RecordedAction format
         let actions: Vec<RecordedAction> = consolidated_steps
             .iter()
-            .map(|step| convert_step_to_recorded_action(step))
+            .map(convert_step_to_recorded_action)
             .collect();
 
         let recorded = RecordedWorkflow {

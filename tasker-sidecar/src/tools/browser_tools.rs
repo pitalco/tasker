@@ -137,7 +137,7 @@ impl Tool for WaitTool {
     }
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let seconds = params["seconds"].as_i64().unwrap_or(3).min(30).max(1);
+        let seconds = params["seconds"].as_i64().unwrap_or(3).clamp(1, 30);
         tokio::time::sleep(tokio::time::Duration::from_secs(seconds as u64)).await;
         Ok(ToolResult::success(format!("Waited for {} seconds", seconds)))
     }

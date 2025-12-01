@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::models::{LogLevel, Run, RunListQuery, RunLog, RunStatus, RunStep};
+use super::models::{Run, RunListQuery, RunLog, RunStatus, RunStep};
 
 /// Database path for runs (uses same Tauri data directory)
 fn get_db_path() -> Result<PathBuf> {
@@ -273,7 +273,7 @@ impl RunRepository {
                 step.step_number,
                 step.tool_name,
                 serde_json::to_string(&step.params)?,
-                step.result.as_ref().map(|r| serde_json::to_string(r)).transpose()?,
+                step.result.as_ref().map(serde_json::to_string).transpose()?,
                 step.success as i32,
                 step.error,
                 step.duration_ms,
@@ -296,7 +296,7 @@ impl RunRepository {
             WHERE id = ?6
             "#,
             params![
-                step.result.as_ref().map(|r| serde_json::to_string(r)).transpose()?,
+                step.result.as_ref().map(serde_json::to_string).transpose()?,
                 step.success as i32,
                 step.error,
                 step.duration_ms,
@@ -371,7 +371,7 @@ impl RunRepository {
                 log.run_id,
                 log.level.as_str(),
                 log.message,
-                log.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?,
+                log.metadata.as_ref().map(serde_json::to_string).transpose()?,
                 log.timestamp.to_rfc3339(),
             ],
         )?;
@@ -401,7 +401,7 @@ impl RunRepository {
                     run_id: row.get(1)?,
                     level: {
                         let level_str: String = row.get(2)?;
-                        LogLevel::from_str(&level_str).unwrap_or_default()
+                        level_str.parse().unwrap_or_default()
                     },
                     message: row.get(3)?,
                     metadata: {
@@ -430,7 +430,7 @@ impl RunRepository {
             workflow_name: row.get(2)?,
             status: {
                 let status_str: String = row.get(3)?;
-                RunStatus::from_str(&status_str).unwrap_or_default()
+                status_str.parse().unwrap_or_default()
             },
             task_description: row.get(4)?,
             custom_instructions: row.get(5)?,

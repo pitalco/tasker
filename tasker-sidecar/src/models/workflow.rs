@@ -109,14 +109,12 @@ where
                     value: text_val,
                     fallback_selectors: vec![],
                 })
-            } else if let Some(aria_val) = aria_label {
-                Some(ElementSelector {
+            } else {
+                aria_label.map(|aria_val| ElementSelector {
                     strategy: SelectorStrategy::AriaLabel,
                     value: aria_val,
                     fallback_selectors: vec![],
                 })
-            } else {
-                None
             }
         }
         None => None,
@@ -223,6 +221,9 @@ pub struct Workflow {
     // Extra fields from Tauri
     #[serde(default)]
     pub version: i32,
+    /// Task description for text-only workflows (AI figures out how to execute)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_description: Option<String>,
 }
 
 fn default_datetime() -> DateTime<Utc> {
@@ -314,6 +315,29 @@ impl Workflow {
             created_at: now,
             updated_at: now,
             version: 1,
+            task_description: None,
+        }
+    }
+
+    /// Create a text-only workflow from a task description
+    /// The AI will figure out how to execute this based on the description
+    pub fn from_description(name: String, task_description: String) -> Self {
+        let now = Utc::now();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            description: None,
+            start_url: String::new(), // AI extracts from description
+            steps: Vec::new(),
+            variables: HashMap::new(),
+            metadata: WorkflowMetadata {
+                recording_source: "text_description".to_string(),
+                ..Default::default()
+            },
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            task_description: Some(task_description),
         }
     }
 

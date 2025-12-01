@@ -1,11 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::str::FromStr;
 
 /// Run status enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
+    #[default]
     Pending,
     Running,
     Completed,
@@ -23,30 +25,29 @@ impl RunStatus {
             RunStatus::Cancelled => "cancelled",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for RunStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "pending" => Some(RunStatus::Pending),
-            "running" => Some(RunStatus::Running),
-            "completed" => Some(RunStatus::Completed),
-            "failed" => Some(RunStatus::Failed),
-            "cancelled" => Some(RunStatus::Cancelled),
-            _ => None,
+            "pending" => Ok(RunStatus::Pending),
+            "running" => Ok(RunStatus::Running),
+            "completed" => Ok(RunStatus::Completed),
+            "failed" => Ok(RunStatus::Failed),
+            "cancelled" => Ok(RunStatus::Cancelled),
+            _ => Err(()),
         }
     }
 }
 
-impl Default for RunStatus {
-    fn default() -> Self {
-        RunStatus::Pending
-    }
-}
-
 /// Log level enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -61,21 +62,19 @@ impl LogLevel {
             LogLevel::Error => "error",
         }
     }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "debug" => Some(LogLevel::Debug),
-            "info" => Some(LogLevel::Info),
-            "warn" => Some(LogLevel::Warn),
-            "error" => Some(LogLevel::Error),
-            _ => None,
-        }
-    }
 }
 
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Info
+impl FromStr for LogLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            _ => Err(()),
+        }
     }
 }
 
@@ -232,7 +231,7 @@ impl RunStep {
         duration_ms: i64,
     ) {
         self.success = success;
-        self.result = result.map(|s| serde_json::Value::String(s));
+        self.result = result.map(serde_json::Value::String);
         self.error = error;
         self.duration_ms = duration_ms;
     }

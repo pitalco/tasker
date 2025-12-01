@@ -10,7 +10,7 @@ use crate::models::{
     RecordingSession, SessionStatusResponse, StartRecordingRequest, StartRecordingResponse,
     StopRecordingResponse, Viewport,
 };
-use crate::recording::BrowserRecorder;
+use crate::recording::{AIEnhancer, BrowserRecorder};
 
 use super::super::state::{ActiveRecorder, AppState, WsEvent};
 
@@ -125,6 +125,7 @@ pub async fn start_recording(
 }
 
 /// Stop a recording session and return the workflow
+/// AI enhancement is automatically applied to generate human-readable step descriptions
 pub async fn stop_recording(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -135,12 +136,26 @@ pub async fn stop_recording(
         .ok_or((StatusCode::NOT_FOUND, "Recording session not found".to_string()))?;
 
     // Stop recording and get workflow
-    let workflow = active.recorder.stop().await.map_err(|e| {
+    let mut workflow = active.recorder.stop().await.map_err(|e| {
         tracing::error!("Failed to stop recording: {}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    tracing::info!("Stopped recording session {}", session_id);
+    tracing::info!("Stopped recording session {}, enhancing {} steps with AI", session_id, workflow.steps.len());
+
+    // Enhance steps with AI-generated descriptions
+    if !workflow.steps.is_empty() {
+        let enhancer = AIEnhancer::new(None); // Use default model
+        match enhancer.enhance_steps(&mut workflow.steps).await {
+            Ok(_) => {
+                tracing::info!("AI enhancement completed for session {}", session_id);
+            }
+            Err(e) => {
+                // Log warning but continue - workflow is still valid without AI descriptions
+                tracing::warn!("AI enhancement failed for session {}: {}", session_id, e);
+            }
+        }
+    }
 
     Ok(Json(StopRecordingResponse { workflow }))
 }

@@ -230,7 +230,7 @@ impl WorkflowAgent {
                                     {
                                         let mut session_guard = session.lock().await;
                                         if let Some(ref mut sess) = *session_guard {
-                                            sess.error = Some(format!("Authentication failed: Please check your API key"));
+                                            sess.error = Some("Authentication failed: Please check your API key".to_string());
                                             sess.status = "failed".to_string();
                                         }
                                     }
@@ -418,7 +418,7 @@ async fn execute_agent_action(
             let direction = action.value.as_deref().unwrap_or("down");
             let (x, y) = match direction {
                 "up" => (0, -500),
-                "down" | _ => (0, 500),
+                _ => (0, 500),
             };
             browser.scroll(x, y).await
         }

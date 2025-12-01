@@ -92,13 +92,13 @@
 				{isImporting ? 'IMPORTING...' : 'IMPORT'}
 			</button>
 			<a
-				href="/record"
+				href="/workflows/new"
 				class="btn-brutal bg-brutal-magenta text-black flex items-center gap-2"
 			>
-				<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-					<circle cx="10" cy="10" r="6" />
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+					<path d="M12 4v16m8-8H4" />
 				</svg>
-				RECORD NEW
+				NEW WORKFLOW
 			</a>
 		</div>
 	</div>
@@ -210,11 +210,11 @@
 					Get started by recording a new workflow or importing an existing one.
 				</p>
 				<div class="flex justify-center gap-4">
-					<a href="/record" class="btn-brutal bg-brutal-magenta text-black flex items-center gap-2">
-						<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-							<circle cx="10" cy="10" r="6" />
+					<a href="/workflows/new" class="btn-brutal bg-brutal-magenta text-black flex items-center gap-2">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+							<path d="M12 4v16m8-8H4" />
 						</svg>
-						START RECORDING
+						CREATE WORKFLOW
 					</a>
 					<button
 						onclick={openImportDialog}
