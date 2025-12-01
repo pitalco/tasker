@@ -56,6 +56,7 @@ pub async fn import_taskfile(yaml_content: String) -> Result<ImportResult, Strin
         steps: Some(workflow_dto.steps),
         variables: Some(workflow_dto.variables),
         metadata: Some(workflow_dto.metadata),
+        task_description: None,
     };
 
     let workflow = db::create_workflow(request)

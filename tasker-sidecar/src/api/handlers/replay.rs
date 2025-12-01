@@ -16,6 +16,11 @@ pub async fn start_replay(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartReplayRequest>,
 ) -> Result<Json<StartReplayResponse>, (StatusCode, String)> {
+    // Debug: log the task description being received
+    println!("========== REPLAY REQUEST ==========");
+    println!("task_description: {:?}", request.task_description);
+    println!("=====================================");
+
     let mut workflow = request.workflow.clone();
 
     // Resolve start_url from metadata or first navigate step if not set

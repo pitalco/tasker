@@ -13,6 +13,8 @@ pub struct Workflow {
     pub synced_at: Option<String>,
     pub version: i32,
     pub is_deleted: bool,
+    /// Task description for text-only workflows
+    pub task_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +56,8 @@ pub struct CreateWorkflowRequest {
     pub steps: Option<Vec<WorkflowStep>>,
     pub variables: Option<Vec<WorkflowVariable>>,
     pub metadata: Option<WorkflowMetadata>,
+    /// Task description for text-only workflows
+    pub task_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +81,8 @@ pub struct WorkflowDto {
     pub created_at: String,
     pub updated_at: String,
     pub version: i32,
+    /// Task description for text-only workflows
+    pub task_description: Option<String>,
 }
 
 impl From<Workflow> for WorkflowDto {
@@ -95,6 +101,7 @@ impl From<Workflow> for WorkflowDto {
             created_at: w.created_at,
             updated_at: w.updated_at,
             version: w.version,
+            task_description: w.task_description,
         }
     }
 }

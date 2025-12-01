@@ -122,5 +122,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    // Migration: Add task_description column if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE workflows ADD COLUMN task_description TEXT")
+        .execute(pool)
+        .await;
+
     Ok(())
 }

@@ -10,7 +10,7 @@ pub async fn get_all_workflows() -> Result<Vec<Workflow>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         SELECT id, name, description, steps_json, variables_json, metadata_json,
-               created_at, updated_at, synced_at, version, is_deleted
+               created_at, updated_at, synced_at, version, is_deleted, task_description
         FROM workflows
         WHERE is_deleted = 0
         ORDER BY updated_at DESC
@@ -33,6 +33,7 @@ pub async fn get_all_workflows() -> Result<Vec<Workflow>, sqlx::Error> {
             synced_at: row.get("synced_at"),
             version: row.get("version"),
             is_deleted: row.get::<i32, _>("is_deleted") != 0,
+            task_description: row.get("task_description"),
         })
         .collect();
 
@@ -45,7 +46,7 @@ pub async fn get_workflow_by_id(id: &str) -> Result<Option<Workflow>, sqlx::Erro
     let row = sqlx::query(
         r#"
         SELECT id, name, description, steps_json, variables_json, metadata_json,
-               created_at, updated_at, synced_at, version, is_deleted
+               created_at, updated_at, synced_at, version, is_deleted, task_description
         FROM workflows
         WHERE id = ? AND is_deleted = 0
         "#,
@@ -66,6 +67,7 @@ pub async fn get_workflow_by_id(id: &str) -> Result<Option<Workflow>, sqlx::Erro
         synced_at: r.get("synced_at"),
         version: r.get("version"),
         is_deleted: r.get::<i32, _>("is_deleted") != 0,
+        task_description: r.get("task_description"),
     }))
 }
 
@@ -84,8 +86,8 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
 
     sqlx::query(
         r#"
-        INSERT INTO workflows (id, name, description, steps_json, variables_json, metadata_json, created_at, updated_at, version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        INSERT INTO workflows (id, name, description, steps_json, variables_json, metadata_json, created_at, updated_at, version, task_description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         "#,
     )
     .bind(&id)
@@ -96,6 +98,7 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
     .bind(&metadata_json)
     .bind(&now)
     .bind(&now)
+    .bind(&req.task_description)
     .execute(pool)
     .await?;
 
@@ -111,6 +114,7 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
         synced_at: None,
         version: 1,
         is_deleted: false,
+        task_description: req.task_description,
     })
 }
 

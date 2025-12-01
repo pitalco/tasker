@@ -63,6 +63,7 @@ pub fn taskfile_to_workflow(taskfile: &Taskfile) -> WorkflowDto {
         created_at: String::new(), // Will be set by repository
         updated_at: String::new(), // Will be set by repository
         version: 1,
+        task_description: None,
     }
 }
 

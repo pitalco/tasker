@@ -1,38 +1,22 @@
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
+use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
+use genai::Client;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
-use crate::browser::dom::{format_elements_for_llm, parse_elements, EXTRACT_ELEMENTS_SCRIPT};
+use crate::agent::UserMessageBuilder;
+use crate::browser::dom::IndexedElements;
 use crate::browser::BrowserManager;
-use crate::llm::{prompts, LLMClient, LLMConfig, LLMProvider};
-use crate::models::{ReplaySession, StepResult, Viewport, Workflow};
+use crate::llm::{LLMConfig, LLMProvider};
+use crate::models::{RecordedAction, ReplaySession, StepResult, Viewport, Workflow};
+use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
 
-/// Action response from LLM
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AgentAction {
-    reasoning: String,
-    action: ActionSpec,
-    done: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActionSpec {
-    #[serde(rename = "type")]
-    action_type: String,
-    #[serde(default)]
-    selector: Option<String>,
-    #[serde(default)]
-    value: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-}
-
-/// AI-powered workflow agent
+/// AI-powered workflow agent using tool-based interaction
 pub struct WorkflowAgent {
     browser: Arc<BrowserManager>,
-    llm: Arc<LLMClient>,
+    config: LLMConfig,
     session: Arc<Mutex<Option<ReplaySession>>>,
     result_sender: broadcast::Sender<StepResult>,
     cancel_sender: broadcast::Sender<()>,
@@ -46,11 +30,9 @@ impl WorkflowAgent {
         let (result_tx, _) = broadcast::channel(256);
         let (cancel_tx, _) = broadcast::channel(1);
 
-        let llm = LLMClient::new(llm_config)?;
-
         Ok(Self {
             browser: Arc::new(BrowserManager::new()),
-            llm: Arc::new(llm),
+            config: llm_config,
             session: Arc::new(Mutex::new(None)),
             result_sender: result_tx,
             cancel_sender: cancel_tx,
@@ -133,7 +115,7 @@ impl WorkflowAgent {
 
     fn spawn_agent_loop(&self, workflow: Workflow, task: String) {
         let browser = Arc::clone(&self.browser);
-        let llm = Arc::clone(&self.llm);
+        let config = self.config.clone();
         let session = Arc::clone(&self.session);
         let result_sender = self.result_sender.clone();
         let stopped = Arc::clone(&self.stopped);
@@ -141,7 +123,56 @@ impl WorkflowAgent {
         let mut cancel_rx = self.cancel_sender.subscribe();
 
         tokio::spawn(async move {
-            let mut history: Vec<String> = Vec::new();
+            // Set up API key if provided
+            if let Some(ref api_key) = config.api_key {
+                std::env::set_var(config.provider.api_key_env_var(), api_key);
+            }
+
+            // Create genai client
+            let client = Client::default();
+            let model_id = config.provider.model_id(&config.model);
+
+            // Create tool registry
+            let mut registry = ToolRegistry::new();
+            register_all_tools(&mut registry);
+
+            // Convert workflow steps to RecordedAction format for hints
+            let recorded_actions: Vec<RecordedAction> = workflow
+                .steps
+                .iter()
+                .map(|step| step.into())
+                .collect();
+
+            // Create indexed elements storage (will be updated before each LLM call)
+            let indexed_elements = Arc::new(RwLock::new(IndexedElements::default()));
+
+            // Create tool context
+            let ctx = ToolContext {
+                run_id: workflow.id.clone(),
+                browser: Arc::clone(&browser),
+                indexed_elements: Arc::clone(&indexed_elements),
+            };
+
+            // Convert tools to genai format
+            let tools: Vec<_> = registry
+                .definitions()
+                .into_iter()
+                .map(|def| {
+                    Tool::new(&def.name)
+                        .with_description(&def.description)
+                        .with_schema(def.parameters)
+                })
+                .collect();
+
+            // Build initial user message
+            let initial_message = build_initial_message(&browser, &task, &recorded_actions, &indexed_elements).await;
+
+            // Build initial chat request with system prompt
+            use crate::llm::prompts::SYSTEM_PROMPT;
+            let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
+                .with_tools(tools)
+                .append_message(initial_message);
+
             let mut iteration = 0;
             let mut consecutive_errors = 0;
 
@@ -178,7 +209,17 @@ impl WorkflowAgent {
                         tracing::info!("Agent cancelled");
                         break;
                     }
-                    result = agent_step(&browser, &llm, &task, &workflow, &mut history, &session) => {
+                    result = agent_step(
+                        &browser,
+                        &client,
+                        &model_id,
+                        &registry,
+                        &ctx,
+                        &indexed_elements,
+                        &mut chat_req,
+                        &session,
+                        &result_sender,
+                    ) => {
                         match result {
                             Ok((step_result, done)) => {
                                 consecutive_errors = 0; // Reset on success
@@ -255,7 +296,6 @@ impl WorkflowAgent {
                                     break;
                                 }
 
-                                history.push(format!("Error: {}", e));
                                 // Wait a bit before retrying
                                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                             }
@@ -308,140 +348,209 @@ impl WorkflowAgent {
     }
 }
 
-/// Execute a single agent step
-async fn agent_step(
+/// Build initial user message with task and screenshot
+async fn build_initial_message(
     browser: &BrowserManager,
-    llm: &LLMClient,
     task: &str,
-    _workflow: &Workflow,
-    history: &mut Vec<String>,
-    _session: &Mutex<Option<ReplaySession>>,
-) -> Result<(StepResult, bool)> {
-    let start = std::time::Instant::now();
-
-    // Get current page state
+    recorded_actions: &[RecordedAction],
+    indexed_elements: &Arc<RwLock<IndexedElements>>,
+) -> ChatMessage {
     let url = browser.current_url().await.unwrap_or_default();
+    let title = browser.get_title().await.unwrap_or_default();
 
-    // Extract interactive elements
-    let elements_json = browser.evaluate(EXTRACT_ELEMENTS_SCRIPT).await?;
-    let elements = parse_elements(&elements_json)?;
-    let elements_str = format_elements_for_llm(&elements);
+    // Get indexed elements from page
+    let elements = if let Ok(elems) = browser.get_indexed_elements().await {
+        // Update the shared indexed elements
+        *indexed_elements.write().await = elems.clone();
+        elems
+    } else {
+        IndexedElements::default()
+    };
 
-    // Build prompt
-    let user_prompt = prompts::format_page_state(&url, &elements_str, task, history);
+    // Build user message text
+    let recorded_workflow = if recorded_actions.is_empty() {
+        None
+    } else {
+        Some(recorded_actions)
+    };
 
-    // Get LLM decision
-    let response = llm
-        .prompt_with_system(prompts::AGENT_SYSTEM_PROMPT, &user_prompt)
-        .await?;
+    let text = UserMessageBuilder::new()
+        .with_recorded_workflow(recorded_workflow)
+        .with_browser_state(&url, &title, elements)
+        .build();
 
-    // Strip markdown code block wrapper if present (e.g., ```json ... ```)
-    let json_str = extract_json_from_response(&response);
+    // Add task description
+    let full_text = format!("Task: {}\n\n{}", task, text);
 
-    // Parse response
-    let action: AgentAction = serde_json::from_str(json_str)
-        .map_err(|e| anyhow!("Failed to parse LLM response: {}. Response: {}", e, response))?;
+    // Build message with screenshot
+    let mut parts = vec![ContentPart::from_text(&full_text)];
 
-    tracing::info!("Agent action: {} - {}", action.action.action_type, action.reasoning);
-
-    // Record history
-    history.push(format!("{}: {}", action.action.action_type, action.reasoning));
-
-    // Execute action
-    let step_id = uuid::Uuid::new_v4().to_string();
-    let result = execute_agent_action(browser, &action.action, &step_id).await;
-
-    let duration_ms = start.elapsed().as_millis() as i32;
-
-    match result {
-        Ok(()) => Ok((StepResult::success(step_id, duration_ms), action.done)),
-        Err(e) => {
-            history.push(format!("Action failed: {}", e));
-            Ok((StepResult::failure(step_id, e.to_string()), false))
-        }
+    // Try to take a screenshot
+    if let Ok(screenshot_base64) = browser.screenshot().await {
+        parts.push(ContentPart::from_binary_base64(
+            "image/png",
+            screenshot_base64,
+            Some("screenshot.png".to_string()),
+        ));
     }
+
+    ChatMessage::user(parts)
 }
 
-/// Extract JSON from LLM response, stripping markdown code block wrapper if present
-fn extract_json_from_response(response: &str) -> &str {
-    let trimmed = response.trim();
-
-    // Check for ```json ... ``` or ``` ... ``` wrapper
-    if trimmed.starts_with("```") {
-        // Find end of first line (skip ```json or ```)
-        if let Some(first_newline) = trimmed.find('\n') {
-            let rest = &trimmed[first_newline + 1..];
-            // Find closing ```
-            if let Some(end_pos) = rest.rfind("```") {
-                return rest[..end_pos].trim();
+/// Execute a single agent step using tool-based interaction
+async fn agent_step(
+    browser: &BrowserManager,
+    client: &Client,
+    model_id: &str,
+    registry: &ToolRegistry,
+    ctx: &ToolContext,
+    indexed_elements: &Arc<RwLock<IndexedElements>>,
+    chat_req: &mut ChatRequest,
+    _session: &Mutex<Option<ReplaySession>>,
+    _result_sender: &broadcast::Sender<StepResult>,
+) -> Result<(StepResult, bool)> {
+    // Log the request being sent to the LLM
+    println!("========== LLM REQUEST ==========");
+    println!("Model: {}", model_id);
+    for (i, msg) in chat_req.messages.iter().enumerate() {
+        println!("Message[{}] role: {:?}", i, msg.role);
+        for part in msg.content.parts() {
+            if let ContentPart::Text(text) = part {
+                println!("Message[{}] text:\n{}", i, text);
+            } else {
+                println!("Message[{}] [IMAGE]", i);
             }
         }
     }
+    println!("=================================");
 
-    // No wrapper, return as-is
-    trimmed
+    // Call the model
+    let chat_res = client
+        .exec_chat(model_id, chat_req.clone(), None)
+        .await
+        .map_err(|e| anyhow!("LLM request failed: {}", e))?;
+
+    // Log the response
+    println!("========== LLM RESPONSE ==========");
+    println!("Response: {:?}", chat_res);
+    println!("==================================");
+
+    // Check for tool calls
+    let tool_calls = chat_res.into_tool_calls();
+
+    if tool_calls.is_empty() {
+        // No tool calls - task may be complete
+        tracing::info!("No tool calls in response, task may be complete");
+        let step_id = uuid::Uuid::new_v4().to_string();
+        return Ok((StepResult::success(step_id, 0), true));
+    }
+
+    // Process each tool call
+    let mut tool_responses = Vec::new();
+    let mut is_done = false;
+    let mut step_results = Vec::new();
+
+    for tool_call in &tool_calls {
+        let start = std::time::Instant::now();
+        let tool_name = &tool_call.fn_name;
+        let params: Value = tool_call.fn_arguments.clone();
+
+        tracing::info!("Executing tool: {} with params: {}", tool_name, params);
+
+        // Execute the tool
+        let result = match registry.execute(tool_name, params, ctx).await {
+            Ok(r) => r,
+            Err(e) => ToolResult::error(format!("Tool execution error: {}", e)),
+        };
+
+        let duration_ms = start.elapsed().as_millis() as i32;
+        let step_id = uuid::Uuid::new_v4().to_string();
+
+        // Create step result
+        let step_result = if result.success {
+            StepResult::success(step_id.clone(), duration_ms)
+        } else {
+            StepResult::failure(step_id.clone(), result.error.clone().unwrap_or_default())
+        };
+
+        step_results.push(step_result);
+
+        // Build tool response
+        let response_content = if result.success {
+            json!({
+                "success": true,
+                "content": result.content,
+                "data": result.data
+            })
+        } else {
+            json!({
+                "success": false,
+                "error": result.error
+            })
+        };
+
+        tool_responses.push(ToolResponse::new(
+            tool_call.call_id.clone(),
+            response_content.to_string(),
+        ));
+
+        // Check if done
+        if result.is_done {
+            is_done = true;
+        }
+    }
+
+    // Append tool calls and responses to chat history
+    *chat_req = chat_req.clone().append_message(tool_calls);
+    for response in tool_responses {
+        *chat_req = chat_req.clone().append_message(response);
+    }
+
+    // Add current page state with screenshot for next iteration
+    let page_state = build_page_state_message(browser, indexed_elements).await;
+    *chat_req = chat_req.clone().append_message(page_state);
+
+    // Return the first step result (or last if multiple)
+    let final_result = step_results.pop().unwrap_or_else(|| {
+        StepResult::success(uuid::Uuid::new_v4().to_string(), 0)
+    });
+
+    Ok((final_result, is_done))
 }
 
-/// Execute an action from the agent
-async fn execute_agent_action(
+/// Build a follow-up message with current page state
+async fn build_page_state_message(
     browser: &BrowserManager,
-    action: &ActionSpec,
-    _step_id: &str,
-) -> Result<()> {
-    match action.action_type.as_str() {
-        "click" => {
-            let selector = action
-                .selector
-                .as_ref()
-                .ok_or_else(|| anyhow!("Click action requires selector"))?;
-            browser.click(selector).await
-        }
-        "type" => {
-            let selector = action
-                .selector
-                .as_ref()
-                .ok_or_else(|| anyhow!("Type action requires selector"))?;
-            let value = action
-                .value
-                .as_ref()
-                .ok_or_else(|| anyhow!("Type action requires value"))?;
-            browser.type_text(selector, value).await
-        }
-        "navigate" => {
-            let url = action
-                .url
-                .as_ref()
-                .ok_or_else(|| anyhow!("Navigate action requires URL"))?;
-            browser.navigate(url).await
-        }
-        "scroll" => {
-            let direction = action.value.as_deref().unwrap_or("down");
-            let (x, y) = match direction {
-                "up" => (0, -500),
-                _ => (0, 500),
-            };
-            browser.scroll(x, y).await
-        }
-        "select" => {
-            let selector = action
-                .selector
-                .as_ref()
-                .ok_or_else(|| anyhow!("Select action requires selector"))?;
-            let value = action
-                .value
-                .as_ref()
-                .ok_or_else(|| anyhow!("Select action requires value"))?;
-            browser.select(selector, value).await
-        }
-        "wait" => {
-            let ms = action
-                .value
-                .as_ref()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1000);
-            browser.wait(ms).await
-        }
-        "done" => Ok(()),
-        _ => Err(anyhow!("Unknown action type: {}", action.action_type)),
+    indexed_elements: &Arc<RwLock<IndexedElements>>,
+) -> ChatMessage {
+    let url = browser.current_url().await.unwrap_or_default();
+    let title = browser.get_title().await.unwrap_or_default();
+
+    // Get indexed elements from page
+    let elements = if let Ok(elems) = browser.get_indexed_elements().await {
+        // Update the shared indexed elements
+        *indexed_elements.write().await = elems.clone();
+        elems
+    } else {
+        IndexedElements::default()
+    };
+
+    // Use UserMessageBuilder for formatting
+    let text = UserMessageBuilder::new()
+        .with_browser_state(&url, &title, elements)
+        .build();
+
+    // Build message with screenshot
+    let mut parts = vec![ContentPart::from_text(&text)];
+
+    // Try to take a screenshot
+    if let Ok(screenshot_base64) = browser.screenshot().await {
+        parts.push(ContentPart::from_binary_base64(
+            "image/png",
+            screenshot_base64,
+            Some("screenshot.png".to_string()),
+        ));
     }
+
+    ChatMessage::user(parts)
 }

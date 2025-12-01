@@ -68,6 +68,11 @@
 
 		totalSteps = workflow.steps.length;
 
+		// Initialize task description from workflow (for text-only workflows)
+		if (workflow.task_description) {
+			taskDescription = workflow.task_description;
+		}
+
 		// Load settings to get API keys and defaults
 		try {
 			const settings = await getSettings();

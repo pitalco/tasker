@@ -13,7 +13,7 @@ use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
 use super::logger::RunLogger;
 use super::models::{Run, RunStatus, RunStep};
 
-use crate::llm::prompts::INSTRUCTION_AGENT_SYSTEM_PROMPT;
+use crate::llm::prompts::SYSTEM_PROMPT;
 
 const MAX_STEPS: usize = 50;
 const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
@@ -101,7 +101,7 @@ impl RunExecutor {
         let tools = self.build_genai_tools();
 
         // Build initial chat request with system prompt
-        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(INSTRUCTION_AGENT_SYSTEM_PROMPT)])
+        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
             .with_tools(tools);
 
         // Add initial user message with task and screenshot
