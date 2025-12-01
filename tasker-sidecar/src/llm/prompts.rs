@@ -43,7 +43,7 @@ Important guidelines:
 Always respond with valid JSON. No other text."#;
 
 /// System prompt for tool-based interaction
-pub const BROWSER_USE_SYSTEM_PROMPT: &str = r#"You are a browser automation agent that controls a web browser to complete tasks.
+pub const INSTRUCTION_AGENT_SYSTEM_PROMPT: &str = r#"You are a browser automation agent that controls a web browser to complete tasks.
 
 ## How You Work
 Each turn, you receive:
