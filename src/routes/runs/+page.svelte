@@ -62,7 +62,7 @@
 		{#each statusFilters as filter}
 			<button
 				onclick={() => runsState.setStatusFilter(filter.value)}
-				class="px-4 py-2 border-3 border-black font-bold text-sm transition-all {runsState.statusFilter === filter.value
+				class="px-4 py-2 border-3 border-black font-bold text-sm transition-all cursor-pointer {runsState.statusFilter === filter.value
 					? 'bg-black text-white'
 					: 'bg-white text-black hover:-translate-y-0.5'}"
 				style="box-shadow: {runsState.statusFilter === filter.value ? '0 0 0 0 #000' : '2px 2px 0 0 #000'};"

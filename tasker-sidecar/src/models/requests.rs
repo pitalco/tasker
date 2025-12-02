@@ -5,7 +5,8 @@ use super::workflow::Workflow;
 
 #[derive(Debug, Deserialize)]
 pub struct StartRecordingRequest {
-    pub start_url: String,
+    /// Optional start URL - if not provided, opens a blank tab
+    pub start_url: Option<String>,
     #[serde(default)]
     pub headless: bool,
     #[serde(default = "default_viewport_width")]

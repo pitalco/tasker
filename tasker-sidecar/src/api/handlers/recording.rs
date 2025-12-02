@@ -37,10 +37,13 @@ pub async fn start_recording(
     // Generate session ID immediately
     let session_id = Uuid::new_v4().to_string();
 
+    // Use provided URL or blank tab
+    let start_url = request.start_url.clone().unwrap_or_else(|| "about:blank".to_string());
+
     // Create initial session with "initializing" status
     let initial_session = RecordingSession {
         id: session_id.clone(),
-        start_url: request.start_url.clone(),
+        start_url: start_url.clone(),
         status: "initializing".to_string(),
         steps: vec![],
         error: None,
@@ -63,13 +66,13 @@ pub async fn start_recording(
     tracing::info!(
         "Created recording session {} (initializing) for URL: {}",
         session_id,
-        request.start_url
+        start_url
     );
 
     // Spawn browser launch in background - this is the slow part
     let state_clone = Arc::clone(&state);
     let sid = session_id.clone();
-    let start_url = request.start_url.clone();
+    let start_url_for_spawn = start_url.clone();
     let headless = request.headless;
     let viewport = Some(Viewport {
         width: request.viewport_width,
@@ -78,7 +81,7 @@ pub async fn start_recording(
 
     tokio::spawn(async move {
         // Perform the actual browser launch
-        match recorder.start(&start_url, headless, viewport).await {
+        match recorder.start(&start_url_for_spawn, headless, viewport).await {
             Ok(session) => {
                 // Update session status to "recording"
                 if let Some(mut active) = state_clone.recordings.get_mut(&sid) {

@@ -4,8 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { getWorkflowState } from '$lib/stores/workflow.svelte';
 	import { downloadTaskfile } from '$lib/services/taskfileService';
-	import { formatStepDescription } from '$lib/utils/stepFormatter';
-	import type { Workflow, WorkflowStep, WorkflowVariable } from '$lib/types/workflow';
+	import type { Workflow, WorkflowVariable } from '$lib/types/workflow';
 
 	const workflowState = getWorkflowState();
 
@@ -18,13 +17,9 @@
 	// Editable fields
 	let editName = $state('');
 	let editDescription = $state('');
-	let editStartUrl = $state('');
-	let editSteps = $state<WorkflowStep[]>([]);
 	let editVariables = $state<WorkflowVariable[]>([]);
 
 	// UI state
-	let expandedSteps = $state<Set<string>>(new Set());
-	let editingStepId = $state<string | null>(null);
 	let showDeleteConfirm = $state(false);
 	let showAddVariable = $state(false);
 	let newVariableName = $state('');
@@ -41,8 +36,6 @@
 			workflow = found;
 			editName = found.name;
 			editDescription = found.description || '';
-			editStartUrl = found.metadata?.start_url || '';
-			editSteps = JSON.parse(JSON.stringify(found.steps)); // Deep clone
 			editVariables = JSON.parse(JSON.stringify(found.variables || []));
 		}
 
@@ -63,12 +56,8 @@
 			await workflowState.updateWorkflow(workflow.id, {
 				name: editName,
 				description: editDescription || undefined,
-				steps: editSteps,
 				variables: editVariables,
-				metadata: {
-					...workflow.metadata,
-					start_url: editStartUrl
-				}
+				metadata: workflow.metadata
 			});
 
 			hasChanges = false;
@@ -90,59 +79,6 @@
 			goto('/');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete';
-		}
-	}
-
-	function toggleStep(stepId: string) {
-		const newSet = new Set(expandedSteps);
-		if (newSet.has(stepId)) {
-			newSet.delete(stepId);
-		} else {
-			newSet.add(stepId);
-		}
-		expandedSteps = newSet;
-	}
-
-	function moveStep(index: number, direction: 'up' | 'down') {
-		const newIndex = direction === 'up' ? index - 1 : index + 1;
-		if (newIndex < 0 || newIndex >= editSteps.length) return;
-
-		const newSteps = [...editSteps];
-		[newSteps[index], newSteps[newIndex]] = [newSteps[newIndex], newSteps[index]];
-
-		// Update order property
-		newSteps.forEach((step, i) => {
-			step.order = i + 1;
-		});
-
-		editSteps = newSteps;
-		markChanged();
-	}
-
-	function deleteStep(index: number) {
-		editSteps = editSteps.filter((_, i) => i !== index);
-		editSteps.forEach((step, i) => {
-			step.order = i + 1;
-		});
-		markChanged();
-	}
-
-	function updateStepDescription(index: number, description: string) {
-		editSteps[index].description = description;
-		editSteps = [...editSteps];
-		markChanged();
-	}
-
-	function updateStepValue(index: number, value: string) {
-		const action = editSteps[index].action;
-		if (action) {
-			if (action.type === 'type') {
-				(action as { type: 'type'; text: string }).text = value;
-			} else if (action.type === 'navigate') {
-				(action as { type: 'navigate'; url: string }).url = value;
-			}
-			editSteps = [...editSteps];
-			markChanged();
 		}
 	}
 
@@ -169,42 +105,6 @@
 		markChanged();
 	}
 
-	function getActionIcon(actionType: string): string {
-		switch (actionType) {
-			case 'click':
-				return 'M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122';
-			case 'type':
-				return 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z';
-			case 'navigate':
-				return 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14';
-			case 'scroll':
-				return 'M19 14l-7 7m0 0l-7-7m7 7V3';
-			case 'select':
-				return 'M8 9l4-4 4 4m0 6l-4 4-4-4';
-			case 'wait':
-				return 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z';
-			default:
-				return 'M13 10V3L4 14h7v7l9-11h-7z';
-		}
-	}
-
-	function getActionColor(actionType: string): string {
-		switch (actionType) {
-			case 'click':
-				return 'bg-brutal-magenta';
-			case 'type':
-				return 'bg-brutal-cyan';
-			case 'navigate':
-				return 'bg-brutal-purple';
-			case 'scroll':
-				return 'bg-brutal-orange';
-			case 'select':
-				return 'bg-brutal-lime';
-			default:
-				return 'bg-brutal-yellow';
-		}
-	}
-
 	async function handleExport() {
 		if (!workflow) return;
 
@@ -227,7 +127,7 @@
 		<div>
 			<button
 				onclick={() => goto('/')}
-				class="text-sm font-bold text-black/60 hover:text-black mb-2 flex items-center gap-1"
+				class="text-sm font-bold text-black/60 hover:text-black mb-2 flex items-center gap-1 cursor-pointer"
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 					<path d="M15 19l-7-7 7-7" />
@@ -298,28 +198,15 @@
 			<div class="p-6 space-y-6">
 				<h2 class="text-xl font-bold text-black">DETAILS</h2>
 
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-					<div>
-						<label class="block text-sm font-bold text-black uppercase mb-2">Name</label>
-						<input
-							type="text"
-							bind:value={editName}
-							oninput={markChanged}
-							class="input-brutal"
-							placeholder="Workflow name"
-						/>
-					</div>
-
-					<div>
-						<label class="block text-sm font-bold text-black uppercase mb-2">Start URL</label>
-						<input
-							type="url"
-							bind:value={editStartUrl}
-							oninput={markChanged}
-							class="input-brutal"
-							placeholder="https://example.com"
-						/>
-					</div>
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Name</label>
+					<input
+						type="text"
+						bind:value={editName}
+						oninput={markChanged}
+						class="input-brutal"
+						placeholder="Workflow name"
+					/>
 				</div>
 
 				<div>
@@ -334,15 +221,16 @@
 
 				<!-- Metadata badges -->
 				<div class="flex flex-wrap gap-2">
-					<span class="px-3 py-1 bg-black text-white font-bold text-xs">
-						{editSteps.length} STEPS
-					</span>
 					{#if workflow.metadata?.recording_source === 'recorded'}
 						<span class="px-3 py-1 bg-brutal-magenta border-2 border-black font-bold text-xs">
 							RECORDED
 						</span>
+					{:else if workflow.metadata?.recording_source === 'text_description'}
+						<span class="px-3 py-1 bg-brutal-purple border-2 border-black font-bold text-xs">
+							TEXT-BASED
+						</span>
 					{/if}
-					<span class="px-3 py-1 bg-brutal-purple border-2 border-black font-bold text-xs">
+					<span class="px-3 py-1 bg-brutal-cyan border-2 border-black font-bold text-xs">
 						{new Date(workflow.created_at).toLocaleDateString()}
 					</span>
 				</div>
@@ -406,212 +294,6 @@
 			</div>
 		</div>
 
-		<!-- Steps -->
-		<div class="card-brutal p-0 overflow-hidden">
-			<div class="bg-brutal-orange h-2 border-b-3 border-black"></div>
-			<div class="p-6 space-y-4">
-				<h2 class="text-xl font-bold text-black">STEPS ({editSteps.length})</h2>
-
-				{#if editSteps.length === 0}
-					<div class="text-center py-8 border-3 border-dashed border-black/30">
-						<p class="text-black/60 font-medium">No steps in this workflow</p>
-					</div>
-				{:else}
-					<div class="space-y-3">
-						{#each editSteps as step, index (step.id)}
-							<div class="border-3 border-black bg-white" style="box-shadow: 2px 2px 0 0 #000;">
-								<!-- Step header -->
-								<div
-									role="button"
-									tabindex="0"
-									onclick={() => toggleStep(step.id)}
-									onkeydown={(e) => e.key === 'Enter' && toggleStep(step.id)}
-									class="w-full p-4 flex items-center gap-4 text-left hover:bg-gray-50 cursor-pointer"
-								>
-									<span
-										class="w-8 h-8 flex items-center justify-center bg-black text-white font-bold text-sm flex-shrink-0"
-									>
-										{index + 1}
-									</span>
-
-									<div
-										class="w-8 h-8 flex items-center justify-center {getActionColor(
-											step.action?.type || ''
-										)} border-2 border-black flex-shrink-0"
-									>
-										<svg
-											class="w-4 h-4"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2"
-											viewBox="0 0 24 24"
-										>
-											<path d={getActionIcon(step.action?.type || '')} />
-										</svg>
-									</div>
-
-									<div class="flex-1 min-w-0">
-										<div class="font-bold text-black truncate">{formatStepDescription(step)}</div>
-										<div class="text-xs text-black/60 font-medium uppercase">
-											{step.action?.type || 'action'}
-										</div>
-									</div>
-
-									<div class="flex items-center gap-2">
-										<button
-											onclick={(e) => {
-												e.stopPropagation();
-												moveStep(index, 'up');
-											}}
-											disabled={index === 0}
-											class="p-1.5 border-2 border-black bg-white disabled:opacity-30"
-											title="Move up"
-										>
-											<svg
-												class="w-4 h-4"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												viewBox="0 0 24 24"
-											>
-												<path d="M5 15l7-7 7 7" />
-											</svg>
-										</button>
-										<button
-											onclick={(e) => {
-												e.stopPropagation();
-												moveStep(index, 'down');
-											}}
-											disabled={index === editSteps.length - 1}
-											class="p-1.5 border-2 border-black bg-white disabled:opacity-30"
-											title="Move down"
-										>
-											<svg
-												class="w-4 h-4"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												viewBox="0 0 24 24"
-											>
-												<path d="M19 9l-7 7-7-7" />
-											</svg>
-										</button>
-										<button
-											onclick={(e) => {
-												e.stopPropagation();
-												deleteStep(index);
-											}}
-											class="p-1.5 border-2 border-black bg-brutal-magenta"
-											title="Delete step"
-										>
-											<svg
-												class="w-4 h-4"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												viewBox="0 0 24 24"
-											>
-												<path
-													d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-												/>
-											</svg>
-										</button>
-										<svg
-											class="w-5 h-5 transition-transform {expandedSteps.has(step.id)
-												? 'rotate-180'
-												: ''}"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2"
-											viewBox="0 0 24 24"
-										>
-											<path d="M19 9l-7 7-7-7" />
-										</svg>
-									</div>
-								</div>
-
-								<!-- Step details (expanded) -->
-								{#if expandedSteps.has(step.id)}
-									<div class="border-t-3 border-black p-4 bg-gray-50 space-y-4">
-										<div>
-											<label class="block text-sm font-bold text-black uppercase mb-2"
-												>Step Description</label
-											>
-											<input
-												type="text"
-												value={step.description || ''}
-												oninput={(e) => updateStepDescription(index, e.currentTarget.value)}
-												class="input-brutal"
-											/>
-										</div>
-
-										{#if step.action?.type === 'type'}
-											<div>
-												<label class="block text-sm font-bold text-black uppercase mb-2">
-													Text to Type
-												</label>
-												<input
-													type="text"
-													value={(step.action as { text?: string }).text || ''}
-													oninput={(e) => updateStepValue(index, e.currentTarget.value)}
-													class="input-brutal"
-													placeholder={'Enter text or {{variable}}'}
-												/>
-											</div>
-										{/if}
-
-										{#if step.action?.type === 'navigate'}
-											<div>
-												<label class="block text-sm font-bold text-black uppercase mb-2">
-													URL
-												</label>
-												<input
-													type="text"
-													value={(step.action as { url?: string }).url || ''}
-													oninput={(e) => updateStepValue(index, e.currentTarget.value)}
-													class="input-brutal"
-													placeholder="https://..."
-												/>
-											</div>
-										{/if}
-
-										{#if step.action?.type === 'click' || step.action?.type === 'type'}
-											{@const action = step.action as { selector?: { css?: string; xpath?: string; text?: string } }}
-											{#if action.selector}
-												<div>
-													<label class="block text-sm font-bold text-black uppercase mb-2"
-														>Selector</label
-													>
-													<code
-														class="block p-3 bg-black text-brutal-lime font-mono text-sm break-all"
-													>
-														{action.selector.css || action.selector.xpath || action.selector.text || 'N/A'}
-													</code>
-												</div>
-											{/if}
-										{/if}
-
-										{#if step.screenshot_path}
-											<div>
-												<label class="block text-sm font-bold text-black uppercase mb-2"
-													>Screenshot</label
-												>
-												<img
-													src={step.screenshot_path}
-													alt="Step screenshot"
-													class="border-3 border-black max-w-full"
-												/>
-											</div>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</div>
-
 		<!-- Save bar -->
 		{#if hasChanges}
 			<div
@@ -624,8 +306,6 @@
 							onclick={() => {
 								editName = workflow?.name || '';
 								editDescription = workflow?.description || '';
-								editStartUrl = workflow?.metadata?.start_url || '';
-								editSteps = JSON.parse(JSON.stringify(workflow?.steps || []));
 								editVariables = JSON.parse(JSON.stringify(workflow?.variables || []));
 								hasChanges = false;
 							}}

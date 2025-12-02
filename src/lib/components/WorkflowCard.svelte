@@ -59,7 +59,7 @@
 				</a>
 				<button
 					onclick={() => (showDeleteConfirm = true)}
-					class="p-2 border-2 border-black bg-brutal-magenta hover:-translate-y-0.5 transition-transform"
+					class="p-2 border-2 border-black bg-brutal-magenta hover:-translate-y-0.5 transition-transform cursor-pointer"
 					title="Delete workflow"
 					style="box-shadow: 2px 2px 0 0 #000;"
 				>
@@ -71,13 +71,7 @@
 		</div>
 
 		<!-- Stats row -->
-		<div class="mt-4 flex items-center gap-4">
-			<span class="inline-flex items-center gap-1.5 px-3 py-1 bg-black text-white text-xs font-bold">
-				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-					<path d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-				</svg>
-				{workflow.steps.length} STEPS
-			</span>
+		<div class="mt-4">
 			<span class="text-xs font-bold text-black/60 uppercase">
 				{formatDate(workflow.updated_at)}
 			</span>

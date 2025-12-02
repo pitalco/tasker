@@ -82,7 +82,7 @@
 			<!-- Describe option -->
 			<button
 				onclick={() => (mode = 'describe')}
-				class="card-brutal p-8 hover:-translate-y-1 transition-transform text-left group"
+				class="card-brutal p-8 hover:-translate-y-1 transition-transform text-left group cursor-pointer"
 			>
 				<div class="w-16 h-16 bg-brutal-purple border-3 border-black flex items-center justify-center mb-6" style="box-shadow: 4px 4px 0 0 #000;">
 					<svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

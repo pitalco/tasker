@@ -33,7 +33,7 @@ export interface LLMProviders {
 }
 
 export interface StartRecordingOptions {
-	start_url: string;
+	start_url?: string;
 	headless?: boolean;
 	viewport_width?: number;
 	viewport_height?: number;

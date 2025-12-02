@@ -106,22 +106,17 @@
 	<!-- Search and filters -->
 	<div class="flex flex-col sm:flex-row gap-4">
 		<div class="flex-1">
-			<div class="relative">
-				<svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-black/40" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-					<path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-				</svg>
-				<input
-					type="text"
-					bind:value={searchQuery}
-					placeholder="Search workflows..."
-					class="input-brutal pl-12"
-				/>
-			</div>
+			<input
+				type="text"
+				bind:value={searchQuery}
+				placeholder="Search workflows..."
+				class="input-brutal"
+			/>
 		</div>
 		<div class="flex gap-2">
 			<button
 				onclick={() => (sortBy = 'updated')}
-				class="px-4 py-3 border-3 border-black font-bold transition-all {sortBy === 'updated'
+				class="px-4 py-3 border-3 border-black font-bold transition-all cursor-pointer {sortBy === 'updated'
 					? 'bg-black text-white'
 					: 'bg-white text-black hover:-translate-y-0.5'}"
 				style="box-shadow: {sortBy === 'updated' ? '0 0 0 0 #000' : '3px 3px 0 0 #000'};"
@@ -130,7 +125,7 @@
 			</button>
 			<button
 				onclick={() => (sortBy = 'name')}
-				class="px-4 py-3 border-3 border-black font-bold transition-all {sortBy === 'name'
+				class="px-4 py-3 border-3 border-black font-bold transition-all cursor-pointer {sortBy === 'name'
 					? 'bg-black text-white'
 					: 'bg-white text-black hover:-translate-y-0.5'}"
 				style="box-shadow: {sortBy === 'name' ? '0 0 0 0 #000' : '3px 3px 0 0 #000'};"

@@ -15,7 +15,6 @@
 
 	const workflowState = getWorkflowState();
 
-	let startUrl = $state('https://');
 	let isRecording = $state(false);
 	let isPaused = $state(false);
 	let steps = $state<WorkflowStep[]>([]);
@@ -58,11 +57,6 @@
 	}
 
 	async function handleStartRecording() {
-		if (!startUrl.trim() || !startUrl.startsWith('http')) {
-			error = 'Please enter a valid URL';
-			return;
-		}
-
 		error = null;
 		isStarting = true;
 		loadingMessage = 'Starting automation engine...';
@@ -75,9 +69,8 @@
 			loadingMessage = 'Launching Chrome browser...';
 			await tick();
 
-			// Start recording via sidecar API (launches Chrome incognito)
+			// Start recording via sidecar API (launches Chrome with blank tab)
 			const response = await startRecording({
-				start_url: startUrl,
 				headless: false,
 				viewport_width: 1280,
 				viewport_height: 720
@@ -129,10 +122,8 @@
 			// Save workflow to store
 			const workflow = await workflowState.createWorkflow({
 				name: response.workflow.name || `Recording ${new Date().toLocaleString()}`,
-				description: `Recorded from ${startUrl}`,
 				steps: response.workflow.steps || steps,
 				metadata: {
-					start_url: startUrl,
 					recording_source: 'recorded'
 				}
 			});
@@ -197,23 +188,11 @@
 			</div>
 
 			<div class="card">
-				<div class="form-group">
-					<label for="url">Start URL</label>
-					<input
-						id="url"
-						type="url"
-						bind:value={startUrl}
-						placeholder="https://example.com"
-						class="url-input"
-					/>
-					<p class="hint">Enter the URL where you want to start recording</p>
-				</div>
-
 				<div class="info-box">
 					<h3>HOW IT WORKS</h3>
 					<ol>
-						<li><span class="num">1</span> Chrome opens in incognito mode</li>
-						<li><span class="num">2</span> Perform the actions you want to automate</li>
+						<li><span class="num">1</span> Chrome opens with a blank tab</li>
+						<li><span class="num">2</span> Navigate to any site and perform your actions</li>
 						<li><span class="num">3</span> Click "Stop & Save" when done</li>
 						<li><span class="num">4</span> Your workflow is saved automatically</li>
 					</ol>
@@ -221,7 +200,7 @@
 
 				<button
 					onclick={handleStartRecording}
-					disabled={!startUrl.trim() || !startUrl.startsWith('http') || isStarting}
+					disabled={isStarting}
 					class="start-btn"
 				>
 					{#if isStarting}
@@ -270,9 +249,8 @@
 							<circle cx="12" cy="12" r="4"/>
 						</svg>
 					</div>
-					<h2>Chrome is running in incognito mode</h2>
-					<p>Perform your actions in the Chrome window. Your steps will appear below.</p>
-					<p class="url-display">{startUrl}</p>
+					<h2>Chrome is running</h2>
+					<p>Navigate to any site and perform the actions you want to automate. Your steps will appear below.</p>
 				</div>
 
 				<div class="steps-panel">
@@ -346,37 +324,6 @@
 		border: 3px solid #000;
 		padding: 24px;
 		box-shadow: 6px 6px 0 0 #000;
-	}
-
-	.form-group {
-		margin-bottom: 24px;
-	}
-
-	.form-group label {
-		display: block;
-		font-weight: bold;
-		text-transform: uppercase;
-		font-size: 0.875rem;
-		margin-bottom: 8px;
-	}
-
-	.url-input {
-		width: 100%;
-		padding: 12px;
-		border: 3px solid #000;
-		font-size: 1rem;
-		background: white;
-	}
-
-	.url-input:focus {
-		outline: none;
-		box-shadow: 4px 4px 0 0 var(--brutal-cyan, #00d4ff);
-	}
-
-	.hint {
-		font-size: 0.875rem;
-		color: rgba(0, 0, 0, 0.6);
-		margin-top: 8px;
 	}
 
 	.info-box {
@@ -594,14 +541,6 @@
 		margin: 0 0 8px;
 		color: #888;
 		font-size: 0.875rem;
-	}
-
-	.url-display {
-		font-family: monospace;
-		padding: 8px 16px;
-		background: #333;
-		border-radius: 4px;
-		color: var(--brutal-cyan, #00d4ff);
 	}
 
 	.steps-panel {

@@ -18,7 +18,6 @@
 		type ApiKeys
 	} from '$lib/services/settingsService';
 	import type { Workflow } from '$lib/types/workflow';
-	import { formatStepDescription } from '$lib/utils/stepFormatter';
 
 	const workflowState = getWorkflowState();
 	const ws = getWebSocket();
@@ -223,7 +222,7 @@
 	<!-- Header -->
 	<div class="flex items-start justify-between">
 		<div>
-			<button onclick={() => goto('/')} class="text-sm font-bold text-black/60 hover:text-black mb-2 flex items-center gap-1">
+			<button onclick={() => goto('/')} class="text-sm font-bold text-black/60 hover:text-black mb-2 flex items-center gap-1 cursor-pointer">
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 					<path d="M15 19l-7-7 7-7" />
 				</svg>
@@ -277,72 +276,72 @@
 			</div>
 		{/if}
 
-		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-			<!-- Settings -->
-			<div class="card-brutal p-0 overflow-hidden">
-				<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
-				<div class="p-6 space-y-6">
-					<h2 class="text-xl font-bold text-black">AI AGENT SETTINGS</h2>
-					<p class="text-sm text-black/60 font-medium -mt-4">
-						AI uses recorded steps as hints, adapting to page changes
-					</p>
+		<!-- Settings -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
+			<div class="p-6 space-y-6">
+				<h2 class="text-xl font-bold text-black">AI AGENT SETTINGS</h2>
+				<p class="text-sm text-black/60 font-medium -mt-4">
+					AI uses recorded steps as hints, adapting to page changes
+				</p>
 
-					<!-- LLM Provider -->
-						<div>
-							<label class="block text-sm font-bold text-black uppercase mb-2">LLM Provider</label>
-							<div class="grid grid-cols-2 gap-2">
-								{#each availableProviders as provider}
-									<button
-										onclick={() => (llmProvider = provider.id)}
-										class="p-3 border-3 border-black font-bold text-sm {llmProvider === provider.id ? 'bg-brutal-lime' : 'bg-white'}"
-										style="box-shadow: 2px 2px 0 0 #000;"
-									>
-										{provider.name.toUpperCase()}
-									</button>
-								{/each}
-							</div>
-							{#if availableProviders.length < PROVIDERS.length}
-								<p class="text-xs text-black/60 font-medium mt-2">
-									<a href="/settings" class="underline">Add more API keys</a> to use other providers
-								</p>
-							{/if}
-						</div>
-
-						<!-- Model -->
-						<div>
-							<label class="block text-sm font-bold text-black uppercase mb-2">Model</label>
-							<select bind:value={llmModel} class="input-brutal">
-								{#each availableModels as model}
-									<option value={model.id}>{model.name}</option>
-								{/each}
-							</select>
-						</div>
-
-						<!-- API Key Status -->
-						<div class="flex items-center gap-2 p-3 border-3 border-black {hasKeyForCurrentProvider ? 'bg-brutal-lime/30' : 'bg-brutal-magenta/30'}" style="box-shadow: 2px 2px 0 0 #000;">
-							{#if hasKeyForCurrentProvider}
-								<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-									<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-								</svg>
-								<span class="font-bold text-sm">API key configured in Settings</span>
-							{:else}
-								<svg class="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-									<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-								</svg>
-								<span class="font-bold text-sm">No API key - <a href="/settings" class="underline">configure in Settings</a></span>
-							{/if}
-						</div>
-
-						<!-- Task Description -->
-					<div>
-						<label class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
-						<textarea
-							bind:value={taskDescription}
-							placeholder="Add any specific instructions for the AI..."
-							class="input-brutal h-24 resize-none"
-						></textarea>
+				<!-- LLM Provider -->
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">LLM Provider</label>
+					<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+						{#each availableProviders as provider}
+							<button
+								onclick={() => (llmProvider = provider.id)}
+								class="p-3 border-3 border-black font-bold text-sm cursor-pointer {llmProvider === provider.id ? 'bg-brutal-lime' : 'bg-white'}"
+								style="box-shadow: 2px 2px 0 0 #000;"
+							>
+								{provider.name.toUpperCase()}
+							</button>
+						{/each}
 					</div>
+					{#if availableProviders.length < PROVIDERS.length}
+						<p class="text-xs text-black/60 font-medium mt-2">
+							<a href="/settings" class="underline">Add more API keys</a> to use other providers
+						</p>
+					{/if}
+				</div>
 
+				<!-- Model -->
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Model</label>
+					<select bind:value={llmModel} class="input-brutal cursor-pointer">
+						{#each availableModels as model}
+							<option value={model.id}>{model.name}</option>
+						{/each}
+					</select>
+				</div>
+
+				<!-- API Key Status -->
+				<div class="flex items-center gap-2 p-3 border-3 border-black {hasKeyForCurrentProvider ? 'bg-brutal-lime/30' : 'bg-brutal-magenta/30'}" style="box-shadow: 2px 2px 0 0 #000;">
+					{#if hasKeyForCurrentProvider}
+						<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+						</svg>
+						<span class="font-bold text-sm">API key configured in Settings</span>
+					{:else}
+						<svg class="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+						</svg>
+						<span class="font-bold text-sm">No API key - <a href="/settings" class="underline">configure in Settings</a></span>
+					{/if}
+				</div>
+
+				<!-- Task Description -->
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
+					<textarea
+						bind:value={taskDescription}
+						placeholder="Add any specific instructions for the AI..."
+						class="input-brutal h-24 resize-none"
+					></textarea>
+				</div>
+
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
 					<!-- Iterations -->
 					<div>
 						<label class="block text-sm font-bold text-black uppercase mb-2">Iterations</label>
@@ -351,59 +350,18 @@
 					</div>
 
 					<!-- Headless -->
-					<div class="flex items-center justify-between">
+					<div class="flex items-center justify-between sm:justify-start sm:gap-6">
 						<div>
 							<div class="font-bold text-black">Headless Mode</div>
 							<div class="text-sm text-black/60 font-medium">Run without visible browser</div>
 						</div>
 						<button
 							onclick={() => (headless = !headless)}
-							class="w-14 h-8 border-3 border-black transition-all {headless ? 'bg-brutal-lime' : 'bg-white'}"
+							class="w-14 h-8 border-3 border-black transition-all cursor-pointer {headless ? 'bg-brutal-lime' : 'bg-white'}"
 							style="box-shadow: 2px 2px 0 0 #000;"
 						>
 							<div class="w-5 h-5 bg-black transition-transform duration-150 {headless ? 'translate-x-6' : 'translate-x-1'}"></div>
 						</button>
-					</div>
-				</div>
-			</div>
-
-			<!-- Workflow Info -->
-			<div class="card-brutal p-0 overflow-hidden">
-				<div class="bg-brutal-purple h-2 border-b-3 border-black"></div>
-				<div class="p-6 space-y-6">
-					<h2 class="text-xl font-bold text-black">WORKFLOW</h2>
-
-					<div class="space-y-4">
-						<div>
-							<div class="text-sm font-bold text-black/60 uppercase">Start URL</div>
-							<div class="font-medium text-black truncate">{workflow.metadata.start_url || 'Not specified'}</div>
-						</div>
-
-						<div>
-							<div class="text-sm font-bold text-black/60 uppercase">Steps</div>
-							<div class="font-bold text-2xl text-black">{workflow.steps.length}</div>
-						</div>
-
-						{#if workflow.description}
-							<div>
-								<div class="text-sm font-bold text-black/60 uppercase">Description</div>
-								<div class="font-medium text-black">{workflow.description}</div>
-							</div>
-						{/if}
-					</div>
-
-					<!-- Steps Preview -->
-					<div class="border-3 border-black p-4 max-h-48 overflow-y-auto" style="box-shadow: 2px 2px 0 0 #000;">
-						<div class="text-sm font-bold text-black/60 uppercase mb-2">Steps Preview</div>
-						{#each workflow.steps.slice(0, 5) as step, i}
-							<div class="flex items-center gap-2 py-1 text-sm font-medium">
-								<span class="w-5 h-5 bg-black text-white flex items-center justify-center text-xs font-bold">{i + 1}</span>
-								<span class="truncate">{formatStepDescription(step)}</span>
-							</div>
-						{/each}
-						{#if workflow.steps.length > 5}
-							<div class="text-sm text-black/60 font-medium mt-2">+{workflow.steps.length - 5} more steps</div>
-						{/if}
 					</div>
 				</div>
 			</div>

@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartRecordingRequest {
-    pub start_url: String,
+    /// Optional start URL - if not provided, opens a blank tab
+    pub start_url: Option<String>,
     pub headless: Option<bool>,
     pub viewport_width: Option<i32>,
     pub viewport_height: Option<i32>,
@@ -58,12 +59,16 @@ pub async fn start_recording(request: StartRecordingRequest) -> Result<Recording
     let client = reqwest::Client::new();
     let url = format!("{}/recording/start", SidecarManager::base_url());
 
-    let body = serde_json::json!({
-        "start_url": request.start_url,
+    let mut body = serde_json::json!({
         "headless": request.headless.unwrap_or(false),
         "viewport_width": request.viewport_width.unwrap_or(1280),
         "viewport_height": request.viewport_height.unwrap_or(720),
     });
+
+    // Only include start_url if provided
+    if let Some(url) = &request.start_url {
+        body["start_url"] = serde_json::json!(url);
+    }
 
     let response = client
         .post(&url)
