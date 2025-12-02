@@ -474,6 +474,131 @@ impl BrowserManager {
     pub async fn page(&self) -> Option<Page> {
         self.page.lock().await.clone()
     }
+
+    /// Click element by CSS selector
+    pub async fn click(&self, selector: &str) -> Result<()> {
+        // Use JavaScript to click the element directly
+        let script = format!(
+            r#"
+            (function() {{
+                const el = document.querySelector({:?});
+                if (!el) {{
+                    throw new Error('Element not found: ' + {:?});
+                }}
+                el.scrollIntoView({{ behavior: 'instant', block: 'center' }});
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                
+                // Dispatch mouse events
+                el.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 0
+                }}));
+                el.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 0
+                }}));
+                el.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 0
+                }}));
+                return true;
+            }})()
+            "#,
+            selector, selector
+        );
+
+        self.evaluate(&script)
+            .await
+            .map_err(|e| anyhow!("Failed to click element '{}': {}", selector, e))?;
+
+        Ok(())
+    }
+
+    /// Type text into element by CSS selector
+    pub async fn type_text(&self, selector: &str, text: &str) -> Result<()> {
+        // Use JavaScript to type into the element
+        // We need to trigger events in a way that the recording script will capture
+        let script = format!(
+            r#"
+            (function() {{
+                const el = document.querySelector({:?});
+                if (!el) {{
+                    throw new Error('Element not found: ' + {:?});
+                }}
+                // Focus first
+                el.focus();
+                
+                // Clear existing value
+                el.value = '';
+                
+                // Set new value
+                el.value = {:?};
+                
+                // Trigger input event (this is what the recording script listens for)
+                el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
+                
+                // Small delay to let debounce timer start, then trigger blur to force immediate capture
+                setTimeout(() => {{
+                    el.dispatchEvent(new Event('blur', {{ bubbles: true, cancelable: true }}));
+                }}, 50);
+                
+                return true;
+            }})()
+            "#,
+            selector, selector, text
+        );
+
+        self.evaluate(&script)
+            .await
+            .map_err(|e| anyhow!("Failed to type text into element '{}': {}", selector, e))?;
+
+        // Wait a bit for the blur event to fire and be captured
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        Ok(())
+    }
+
+    /// Select option in dropdown by CSS selector
+    pub async fn select(&self, selector: &str, value: &str) -> Result<()> {
+        // Use JavaScript to set the select value
+        let script = format!(
+            r#"
+            (function() {{
+                const el = document.querySelector({:?});
+                if (!el) {{
+                    throw new Error('Element not found');
+                }}
+                if (el.tagName !== 'SELECT') {{
+                    throw new Error('Element is not a SELECT');
+                }}
+                el.value = {:?};
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                return true;
+            }})()
+            "#,
+            selector, value
+        );
+
+        self.evaluate(&script)
+            .await
+            .map_err(|e| anyhow!("Failed to select option '{}' in '{}': {}", value, selector, e))?;
+
+        Ok(())
+    }
 }
 
 impl Default for BrowserManager {

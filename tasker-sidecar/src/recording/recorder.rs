@@ -144,12 +144,12 @@ const RECORDING_SCRIPT: &str = r#"
         sendInputValue(e.target, 'blur');
     }, true);
 
-    // KEYDOWN - handle Enter, Tab (these often trigger actions)
+    // KEYDOWN - handle Enter, Tab, Backspace (these often trigger actions)
     document.addEventListener('keydown', (e) => {
         const el = e.target;
 
-        // Enter or Tab in an input - capture value FIRST, then the keypress
-        if (e.key === 'Enter' || e.key === 'Tab') {
+        // Enter, Tab, or Backspace in an input - capture value FIRST, then the keypress
+        if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Backspace') {
             if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
                 clearTimeout(inputTimer);
                 sendInputValue(el, 'before-' + e.key.toLowerCase());
