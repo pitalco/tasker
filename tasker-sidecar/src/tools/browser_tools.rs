@@ -174,36 +174,20 @@ impl Tool for ClickTool {
             .as_i64()
             .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
 
-        // Look up selector from indexed elements
-        let indexed = ctx.indexed_elements.read().await;
-        let selector = match indexed.get_selector(index) {
-            Some(s) => s.to_string(),
+        // Look up backend_node_id from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let backend_id = match selector_map.get_backend_id(index) {
+            Some(id) => id,
             None => return Ok(ToolResult::error(format!(
                 "Element index {} not found. Valid indices: 1-{}",
-                index, indexed.elements.len()
+                index, selector_map.len()
             ))),
         };
-        drop(indexed); // Release read lock before async operations
+        drop(selector_map); // Release read lock before async operations
 
-        match ctx.browser.click(&selector).await {
+        match ctx.browser.click_by_backend_id(backend_id).await {
             Ok(()) => Ok(ToolResult::success(format!("Clicked element [{}]", index))),
-            Err(e) => {
-                // Try alternative: click via JavaScript
-                let script = format!(
-                    r#"
-                    const el = document.querySelector('{}');
-                    if (el) {{ el.click(); return 'clicked'; }}
-                    return 'not found';
-                    "#,
-                    selector.replace('\'', "\\'")
-                );
-                match ctx.browser.evaluate(&script).await {
-                    Ok(result) if result.as_str() == Some("clicked") => {
-                        Ok(ToolResult::success(format!("Clicked element [{}]", index)))
-                    }
-                    _ => Ok(ToolResult::error(format!("Failed to click element [{}]: {}", index, e)))
-                }
-            }
+            Err(e) => Ok(ToolResult::error(format!("Failed to click element [{}]: {}", index, e)))
         }
     }
 }
@@ -242,18 +226,18 @@ impl Tool for InputTextTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'text' parameter"))?;
 
-        // Look up selector from indexed elements
-        let indexed = ctx.indexed_elements.read().await;
-        let selector = match indexed.get_selector(index) {
-            Some(s) => s.to_string(),
+        // Look up backend_node_id from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let backend_id = match selector_map.get_backend_id(index) {
+            Some(id) => id,
             None => return Ok(ToolResult::error(format!(
                 "Element index {} not found. Valid indices: 1-{}",
-                index, indexed.elements.len()
+                index, selector_map.len()
             ))),
         };
-        drop(indexed);
+        drop(selector_map);
 
-        match ctx.browser.type_text(&selector, text).await {
+        match ctx.browser.type_by_backend_id(backend_id, text).await {
             Ok(()) => Ok(ToolResult::success(format!(
                 "Typed '{}' into element [{}]",
                 text, index
@@ -296,27 +280,20 @@ impl Tool for ScrollTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
         if let Some(index) = params["to_element"].as_i64() {
             let index = index as i32;
-            // Look up selector from indexed elements
-            let indexed = ctx.indexed_elements.read().await;
-            let selector = match indexed.get_selector(index) {
-                Some(s) => s.to_string(),
+            // Look up element from selector map
+            let selector_map = ctx.selector_map.read().await;
+            let element = match selector_map.get_element_by_index(index) {
+                Some(el) => el.clone(),
                 None => return Ok(ToolResult::error(format!(
                     "Element index {} not found. Valid indices: 1-{}",
-                    index, indexed.elements.len()
+                    index, selector_map.len()
                 ))),
             };
-            drop(indexed);
+            drop(selector_map);
 
-            // Scroll element into view
-            let script = format!(
-                r#"
-                const el = document.querySelector('{}');
-                if (el) {{ el.scrollIntoView({{ behavior: 'smooth', block: 'center' }}); return 'scrolled'; }}
-                return 'not found';
-                "#,
-                selector.replace('\'', "\\'")
-            );
-            ctx.browser.evaluate(&script).await?;
+            // Scroll to element's position
+            let scroll_y = element.bounds.y as i32;
+            ctx.browser.scroll(0, scroll_y).await?;
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             return Ok(ToolResult::success(format!("Scrolled to element [{}]", index)));
         }
@@ -593,23 +570,59 @@ impl Tool for SelectDropdownTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'option' parameter"))?;
 
-        // Look up selector from indexed elements
-        let indexed = ctx.indexed_elements.read().await;
-        let selector = match indexed.get_selector(index) {
-            Some(s) => s.to_string(),
+        // Look up element from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let element = match selector_map.get_element_by_index(index) {
+            Some(el) => el.clone(),
             None => return Ok(ToolResult::error(format!(
                 "Element index {} not found. Valid indices: 1-{}",
-                index, indexed.elements.len()
+                index, selector_map.len()
             ))),
         };
-        drop(indexed);
+        drop(selector_map);
 
-        ctx.browser.select(&selector, option).await?;
+        // Check if element is a select
+        if element.tag.to_lowercase() != "select" {
+            return Ok(ToolResult::error(format!(
+                "Element [{}] is not a select/dropdown (found {})",
+                index, element.tag
+            )));
+        }
 
-        Ok(ToolResult::success(format!(
-            "Selected option '{}' in dropdown [{}]",
-            option, index
-        )))
+        // Use JavaScript to select option by clicking the element position
+        let script = format!(
+            r#"
+            const elements = document.elementsFromPoint({}, {});
+            for (const el of elements) {{
+                if (el.tagName === 'SELECT') {{
+                    const optionValue = '{}';
+                    for (const opt of el.options) {{
+                        if (opt.value === optionValue || opt.text === optionValue) {{
+                            el.value = opt.value;
+                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            return 'selected';
+                        }}
+                    }}
+                    return 'option not found';
+                }}
+            }}
+            return 'select not found';
+            "#,
+            element.bounds.x + element.bounds.width / 2.0,
+            element.bounds.y + element.bounds.height / 2.0,
+            option.replace('\'', "\\'")
+        );
+
+        match ctx.browser.evaluate(&script).await? {
+            result if result.as_str() == Some("selected") => Ok(ToolResult::success(format!(
+                "Selected option '{}' in dropdown [{}]",
+                option, index
+            ))),
+            result => Ok(ToolResult::error(format!(
+                "Failed to select option '{}' in dropdown [{}]: {:?}",
+                option, index, result
+            )))
+        }
     }
 }
 
@@ -640,24 +653,38 @@ impl Tool for GetDropdownOptionsTool {
             .as_i64()
             .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
 
-        // Look up selector from indexed elements
-        let indexed = ctx.indexed_elements.read().await;
-        let selector = match indexed.get_selector(index) {
-            Some(s) => s.to_string(),
+        // Look up element from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let element = match selector_map.get_element_by_index(index) {
+            Some(el) => el.clone(),
             None => return Ok(ToolResult::error(format!(
                 "Element index {} not found. Valid indices: 1-{}",
-                index, indexed.elements.len()
+                index, selector_map.len()
             ))),
         };
-        drop(indexed);
+        drop(selector_map);
 
+        // Check if element is a select
+        if element.tag.to_lowercase() != "select" {
+            return Ok(ToolResult::error(format!(
+                "Element [{}] is not a select/dropdown (found {})",
+                index, element.tag
+            )));
+        }
+
+        // Use JavaScript to get options at element position
         let script = format!(
             r#"
-            const el = document.querySelector('{}');
-            if (!el || el.tagName !== 'SELECT') return JSON.stringify([]);
-            return JSON.stringify(Array.from(el.options).map(o => ({{ value: o.value, text: o.text, selected: o.selected }})));
+            const elements = document.elementsFromPoint({}, {});
+            for (const el of elements) {{
+                if (el.tagName === 'SELECT') {{
+                    return JSON.stringify(Array.from(el.options).map(o => ({{ value: o.value, text: o.text, selected: o.selected }})));
+                }}
+            }}
+            return JSON.stringify([]);
             "#,
-            selector.replace('\'', "\\'")
+            element.bounds.x + element.bounds.width / 2.0,
+            element.bounds.y + element.bounds.height / 2.0
         );
 
         let result = ctx.browser.evaluate(&script).await?;

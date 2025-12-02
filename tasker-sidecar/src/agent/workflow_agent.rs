@@ -7,8 +7,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::agent::UserMessageBuilder;
-use crate::browser::dom::IndexedElements;
-use crate::browser::BrowserManager;
+use crate::browser::{BrowserManager, SelectorMap};
 use crate::llm::{LLMConfig, LLMProvider};
 use crate::models::{RecordedAction, ReplaySession, StepResult, Viewport, Workflow};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
@@ -143,14 +142,14 @@ impl WorkflowAgent {
                 .map(|step| step.into())
                 .collect();
 
-            // Create indexed elements storage (will be updated before each LLM call)
-            let indexed_elements = Arc::new(RwLock::new(IndexedElements::default()));
+            // Create selector map storage (will be updated before each LLM call)
+            let selector_map = Arc::new(RwLock::new(SelectorMap::new()));
 
             // Create tool context
             let ctx = ToolContext {
                 run_id: workflow.id.clone(),
                 browser: Arc::clone(&browser),
-                indexed_elements: Arc::clone(&indexed_elements),
+                selector_map: Arc::clone(&selector_map),
             };
 
             // Convert tools to genai format
@@ -165,7 +164,7 @@ impl WorkflowAgent {
                 .collect();
 
             // Build initial user message
-            let initial_message = build_initial_message(&browser, &task, &recorded_actions, &indexed_elements).await;
+            let initial_message = build_initial_message(&browser, &task, &recorded_actions, &selector_map).await;
 
             // Build initial chat request with system prompt
             use crate::llm::prompts::SYSTEM_PROMPT;
@@ -215,7 +214,7 @@ impl WorkflowAgent {
                         &model_id,
                         &registry,
                         &ctx,
-                        &indexed_elements,
+                        &selector_map,
                         &mut chat_req,
                         &session,
                         &result_sender,
@@ -353,19 +352,16 @@ async fn build_initial_message(
     browser: &BrowserManager,
     task: &str,
     recorded_actions: &[RecordedAction],
-    indexed_elements: &Arc<RwLock<IndexedElements>>,
+    selector_map: &Arc<RwLock<SelectorMap>>,
 ) -> ChatMessage {
     let url = browser.current_url().await.unwrap_or_default();
     let title = browser.get_title().await.unwrap_or_default();
 
-    // Get indexed elements from page
-    let elements = if let Ok(elems) = browser.get_indexed_elements().await {
-        // Update the shared indexed elements
-        *indexed_elements.write().await = elems.clone();
-        elems
-    } else {
-        IndexedElements::default()
-    };
+    // Get DOM extraction result from page
+    let dom_result = browser.get_indexed_elements().await.unwrap_or_default();
+
+    // Update the shared selector map for tools
+    *selector_map.write().await = dom_result.selector_map.clone();
 
     // Build user message text
     let recorded_workflow = if recorded_actions.is_empty() {
@@ -376,7 +372,7 @@ async fn build_initial_message(
 
     let text = UserMessageBuilder::new()
         .with_recorded_workflow(recorded_workflow)
-        .with_browser_state(&url, &title, elements)
+        .with_browser_state(&url, &title, &dom_result)
         .build();
 
     // Add task description
@@ -404,7 +400,7 @@ async fn agent_step(
     model_id: &str,
     registry: &ToolRegistry,
     ctx: &ToolContext,
-    indexed_elements: &Arc<RwLock<IndexedElements>>,
+    selector_map: &Arc<RwLock<SelectorMap>>,
     chat_req: &mut ChatRequest,
     _session: &Mutex<Option<ReplaySession>>,
     _result_sender: &broadcast::Sender<StepResult>,
@@ -507,7 +503,7 @@ async fn agent_step(
     }
 
     // Add current page state with screenshot for next iteration
-    let page_state = build_page_state_message(browser, indexed_elements).await;
+    let page_state = build_page_state_message(browser, selector_map).await;
     *chat_req = chat_req.clone().append_message(page_state);
 
     // Return the first step result (or last if multiple)
@@ -521,23 +517,20 @@ async fn agent_step(
 /// Build a follow-up message with current page state
 async fn build_page_state_message(
     browser: &BrowserManager,
-    indexed_elements: &Arc<RwLock<IndexedElements>>,
+    selector_map: &Arc<RwLock<SelectorMap>>,
 ) -> ChatMessage {
     let url = browser.current_url().await.unwrap_or_default();
     let title = browser.get_title().await.unwrap_or_default();
 
-    // Get indexed elements from page
-    let elements = if let Ok(elems) = browser.get_indexed_elements().await {
-        // Update the shared indexed elements
-        *indexed_elements.write().await = elems.clone();
-        elems
-    } else {
-        IndexedElements::default()
-    };
+    // Get DOM extraction result from page
+    let dom_result = browser.get_indexed_elements().await.unwrap_or_default();
+
+    // Update the shared selector map for tools
+    *selector_map.write().await = dom_result.selector_map.clone();
 
     // Use UserMessageBuilder for formatting
     let text = UserMessageBuilder::new()
-        .with_browser_state(&url, &title, elements)
+        .with_browser_state(&url, &title, &dom_result)
         .build();
 
     // Build message with screenshot

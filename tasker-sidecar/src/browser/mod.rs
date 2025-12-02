@@ -1,5 +1,5 @@
-pub mod actions;
-pub mod dom;
+pub mod cdp_dom;
 pub mod manager;
 
+pub use cdp_dom::{DOMExtractionResult, SelectorMap, BackendNodeId};
 pub use manager::BrowserManager;

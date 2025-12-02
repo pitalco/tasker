@@ -6,8 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::agent::UserMessageBuilder;
-use crate::browser::dom::IndexedElements;
-use crate::browser::BrowserManager;
+use crate::browser::{BrowserManager, SelectorMap};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
 
 use super::logger::RunLogger;
@@ -79,14 +78,14 @@ impl RunExecutor {
             user_prompt.push_str(&format!("\n\nAdditional instructions:\n{}", instructions));
         }
 
-        // Create indexed elements storage (will be updated before each LLM call)
-        let indexed_elements = Arc::new(RwLock::new(IndexedElements::default()));
+        // Create selector map storage (will be updated before each LLM call)
+        let selector_map = Arc::new(RwLock::new(SelectorMap::new()));
 
         // Create tool context
         let ctx = ToolContext {
             run_id: run_id.clone(),
             browser: Arc::clone(&self.browser),
-            indexed_elements: Arc::clone(&indexed_elements),
+            selector_map: Arc::clone(&selector_map),
         };
 
         // Set up API key if provided
@@ -246,7 +245,7 @@ impl RunExecutor {
             }
 
             // Add current page state with screenshot for next iteration
-            let page_state = self.build_page_state_message(&indexed_elements).await;
+            let page_state = self.build_page_state_message(&selector_map).await;
             chat_req = chat_req.append_message(page_state);
         }
 
@@ -284,22 +283,19 @@ impl RunExecutor {
     }
 
     /// Build a follow-up message with current page state using UserMessageBuilder
-    async fn build_page_state_message(&self, indexed_elements: &Arc<RwLock<IndexedElements>>) -> ChatMessage {
+    async fn build_page_state_message(&self, selector_map: &Arc<RwLock<SelectorMap>>) -> ChatMessage {
         let url = self.browser.current_url().await.unwrap_or_default();
         let title = self.browser.get_title().await.unwrap_or_default();
 
-        // Get indexed elements from page
-        let elements = if let Ok(elems) = self.browser.get_indexed_elements().await {
-            // Update the shared indexed elements
-            *indexed_elements.write().await = elems.clone();
-            elems
-        } else {
-            IndexedElements::default()
-        };
+        // Get DOM extraction result from page
+        let dom_result = self.browser.get_indexed_elements().await.unwrap_or_default();
+
+        // Update the shared selector map for tools
+        *selector_map.write().await = dom_result.selector_map.clone();
 
         // Use UserMessageBuilder for formatting
         let text = UserMessageBuilder::new()
-            .with_browser_state(&url, &title, elements)
+            .with_browser_state(&url, &title, &dom_result)
             .build();
 
         self.build_user_message_with_screenshot(&text).await

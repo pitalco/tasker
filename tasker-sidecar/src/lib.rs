@@ -6,6 +6,5 @@ pub mod error;
 pub mod llm;
 pub mod models;
 pub mod recording;
-pub mod replay;
 pub mod runs;
 pub mod tools;

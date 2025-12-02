@@ -1,6 +1,13 @@
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::dom::{
+    BackendNodeId as CdpBackendNodeId, DescribeNodeParams, FocusParams, GetBoxModelParams,
+    ScrollIntoViewIfNeededParams,
+};
+use chromiumoxide::cdp::browser_protocol::input::{
+    DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
+};
 use chromiumoxide::cdp::browser_protocol::page::{AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat};
 use chromiumoxide::cdp::js_protocol::runtime::{AddBindingParams, EventBindingCalled};
 use chromiumoxide::listeners::EventStream;
@@ -11,7 +18,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::browser::dom::{IndexedElements, InteractiveElement, EXTRACT_ELEMENTS_SCRIPT};
+use crate::browser::cdp_dom::{self, BackendNodeId, DOMExtractionResult};
 use crate::models::Viewport;
 
 /// Manages browser lifecycle and page connections
@@ -191,51 +198,6 @@ impl BrowserManager {
         Ok(())
     }
 
-    /// Click on an element
-    pub async fn click(&self, selector: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
-        let element = page
-            .find_element(selector)
-            .await
-            .map_err(|e| anyhow!("Failed to find element '{}': {}", selector, e))?;
-
-        element
-            .click()
-            .await
-            .map_err(|e| anyhow!("Failed to click element '{}': {}", selector, e))?;
-
-        Ok(())
-    }
-
-    /// Type text into an element
-    pub async fn type_text(&self, selector: &str, text: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
-        let element = page
-            .find_element(selector)
-            .await
-            .map_err(|e| anyhow!("Failed to find element '{}': {}", selector, e))?;
-
-        element
-            .click()
-            .await
-            .map_err(|e| anyhow!("Failed to focus element '{}': {}", selector, e))?;
-
-        element
-            .type_str(text)
-            .await
-            .map_err(|e| anyhow!("Failed to type into element '{}': {}", selector, e))?;
-
-        Ok(())
-    }
-
     /// Scroll the page
     pub async fn scroll(&self, x: i32, y: i32) -> Result<()> {
         let page_guard = self.page.lock().await;
@@ -248,86 +210,6 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to scroll: {}", e))?;
 
         Ok(())
-    }
-
-    /// Hover over an element
-    pub async fn hover(&self, selector: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
-        let element = page
-            .find_element(selector)
-            .await
-            .map_err(|e| anyhow!("Failed to find element '{}': {}", selector, e))?;
-
-        element
-            .hover()
-            .await
-            .map_err(|e| anyhow!("Failed to hover over element '{}': {}", selector, e))?;
-
-        Ok(())
-    }
-
-    /// Select an option from a dropdown
-    pub async fn select(&self, selector: &str, value: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
-        // Use JavaScript to select the option
-        let script = format!(
-            r#"
-            const select = document.querySelector('{}');
-            if (select) {{
-                select.value = '{}';
-                select.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            }}
-            "#,
-            selector.replace('\'', "\\'"),
-            value.replace('\'', "\\'")
-        );
-
-        page.evaluate(script)
-            .await
-            .map_err(|e| anyhow!("Failed to select option: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Wait for a duration
-    pub async fn wait(&self, duration_ms: u64) -> Result<()> {
-        tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms)).await;
-        Ok(())
-    }
-
-    /// Wait for an element to appear
-    pub async fn wait_for_element(&self, selector: &str, timeout_ms: u64) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
-        let timeout = std::time::Duration::from_millis(timeout_ms);
-        let start = std::time::Instant::now();
-
-        loop {
-            if page.find_element(selector).await.is_ok() {
-                return Ok(());
-            }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow!(
-                    "Timeout waiting for element '{}' after {}ms",
-                    selector,
-                    timeout_ms
-                ));
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
     }
 
     /// Execute JavaScript and return result
@@ -347,15 +229,166 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to parse script result: {}", e))
     }
 
-    /// Get indexed interactive elements from the current page
-    /// Returns elements with 1-based indices for AI interaction
-    pub async fn get_indexed_elements(&self) -> Result<IndexedElements> {
-        let result = self.evaluate(EXTRACT_ELEMENTS_SCRIPT).await?;
+    /// Get indexed interactive elements using CDP-based extraction
+    /// Returns elements with backend_node_id for stable interaction
+    pub async fn get_indexed_elements(&self) -> Result<DOMExtractionResult> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
 
-        let elements: Vec<InteractiveElement> = serde_json::from_value(result)
-            .map_err(|e| anyhow!("Failed to parse elements: {}", e))?;
+        cdp_dom::extract_dom(page).await
+    }
 
-        Ok(IndexedElements::new(elements))
+    /// Click element by backend_node_id
+    pub async fn click_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        // Get box model to find click coordinates
+        let box_params = GetBoxModelParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+        };
+
+        let box_result = page.execute(box_params)
+            .await
+            .map_err(|e| anyhow!("Failed to get box model for backend_node_id {}: {}", backend_id, e))?;
+
+        let model = box_result.result.model;
+        let content = model.content.inner();
+
+        // Calculate center point (content quad is [x1,y1, x2,y2, x3,y3, x4,y4])
+        let center_x = (content[0] + content[2] + content[4] + content[6]) / 4.0;
+        let center_y = (content[1] + content[3] + content[5] + content[7]) / 4.0;
+
+        // Scroll element into view first
+        let scroll_params = ScrollIntoViewIfNeededParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+            rect: None,
+        };
+        let _ = page.execute(scroll_params).await;
+
+        // Small delay for scroll
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Dispatch mouse events
+        let mouse_down = DispatchMouseEventParams {
+            r#type: DispatchMouseEventType::MousePressed,
+            x: center_x,
+            y: center_y,
+            button: Some(MouseButton::Left),
+            click_count: Some(1),
+            modifiers: None,
+            timestamp: None,
+            delta_x: None,
+            delta_y: None,
+            pointer_type: None,
+            buttons: None,
+            tangential_pressure: None,
+            tilt_x: None,
+            tilt_y: None,
+            twist: None,
+            force: None,
+        };
+
+        let mouse_up = DispatchMouseEventParams {
+            r#type: DispatchMouseEventType::MouseReleased,
+            x: center_x,
+            y: center_y,
+            button: Some(MouseButton::Left),
+            click_count: Some(1),
+            modifiers: None,
+            timestamp: None,
+            delta_x: None,
+            delta_y: None,
+            pointer_type: None,
+            buttons: None,
+            tangential_pressure: None,
+            tilt_x: None,
+            tilt_y: None,
+            twist: None,
+            force: None,
+        };
+
+        page.execute(mouse_down).await
+            .map_err(|e| anyhow!("Failed to dispatch mousedown: {}", e))?;
+        page.execute(mouse_up).await
+            .map_err(|e| anyhow!("Failed to dispatch mouseup: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Focus element by backend_node_id
+    pub async fn focus_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        let params = FocusParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+        };
+
+        page.execute(params).await
+            .map_err(|e| anyhow!("Failed to focus element: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Type text into element by backend_node_id
+    pub async fn type_by_backend_id(&self, backend_id: BackendNodeId, text: &str) -> Result<()> {
+        // First focus the element
+        self.focus_by_backend_id(backend_id).await?;
+
+        // Small delay for focus
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Type using keyboard events
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        // Use insertText for reliable text input
+        use chromiumoxide::cdp::browser_protocol::input::{InsertTextParams};
+        let params = InsertTextParams {
+            text: text.to_string(),
+        };
+
+        page.execute(params).await
+            .map_err(|e| anyhow!("Failed to type text: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Get element info by backend_node_id
+    pub async fn describe_node(&self, backend_id: BackendNodeId) -> Result<serde_json::Value> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        let params = DescribeNodeParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+            depth: Some(0),
+            pierce: Some(false),
+        };
+
+        let result = page.execute(params).await
+            .map_err(|e| anyhow!("Failed to describe node: {}", e))?;
+
+        serde_json::to_value(&result.result.node)
+            .map_err(|e| anyhow!("Failed to serialize node: {}", e))
     }
 
     /// Get current page title

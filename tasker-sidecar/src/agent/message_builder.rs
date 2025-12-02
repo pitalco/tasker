@@ -1,4 +1,4 @@
-use crate::browser::dom::IndexedElements;
+use crate::browser::DOMExtractionResult;
 use crate::models::RecordedAction;
 
 /// Builds the user message for each LLM turn
@@ -7,7 +7,7 @@ pub struct UserMessageBuilder {
     custom_instructions: Option<String>,
     url: String,
     title: String,
-    indexed_elements: IndexedElements,
+    elements_repr: String,
 }
 
 impl UserMessageBuilder {
@@ -17,7 +17,7 @@ impl UserMessageBuilder {
             custom_instructions: None,
             url: String::new(),
             title: String::new(),
-            indexed_elements: IndexedElements::default(),
+            elements_repr: String::new(),
         }
     }
 
@@ -34,10 +34,10 @@ impl UserMessageBuilder {
     }
 
     /// Set the current browser state
-    pub fn with_browser_state(mut self, url: &str, title: &str, elements: IndexedElements) -> Self {
+    pub fn with_browser_state(mut self, url: &str, title: &str, dom_result: &DOMExtractionResult) -> Self {
         self.url = url.to_string();
         self.title = title.to_string();
-        self.indexed_elements = elements;
+        self.elements_repr = dom_result.llm_representation.clone();
         self
     }
 
@@ -66,7 +66,7 @@ impl UserMessageBuilder {
         parts.push(format_browser_state(
             &self.url,
             &self.title,
-            &self.indexed_elements,
+            &self.elements_repr,
         ));
 
         parts.join("\n\n")
@@ -94,12 +94,10 @@ fn format_recorded_workflow(steps: &[RecordedAction]) -> String {
 }
 
 /// Format browser state with indexed elements
-fn format_browser_state(url: &str, title: &str, elements: &IndexedElements) -> String {
-    let elements_str = elements.format_for_llm();
-
+fn format_browser_state(url: &str, title: &str, elements_repr: &str) -> String {
     format!(
         "<browser_state>\nURL: {}\nTitle: {}\n\nInteractive Elements:\n{}</browser_state>",
-        url, title, elements_str
+        url, title, elements_repr
     )
 }
 

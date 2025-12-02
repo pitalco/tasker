@@ -6,8 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::browser::BrowserManager;
-use crate::browser::dom::IndexedElements;
+use crate::browser::{BrowserManager, SelectorMap};
 
 /// Tool definition for LLM function calling
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,8 +77,8 @@ impl ToolResult {
 pub struct ToolContext {
     pub run_id: String,
     pub browser: Arc<BrowserManager>,
-    /// Current indexed elements from the page (updated before each LLM turn)
-    pub indexed_elements: Arc<RwLock<IndexedElements>>,
+    /// Current selector map from the page (updated before each LLM turn)
+    pub selector_map: Arc<RwLock<SelectorMap>>,
 }
 
 /// Trait for implementing tools
