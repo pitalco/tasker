@@ -193,12 +193,17 @@ impl AIEnhancer {
     }
 }
 
-const TASK_DESCRIPTION_PROMPT: &str = r#"You are analyzing a recorded browser automation session. Generate a name and detailed task description that an AI agent could use to replicate this workflow.
+const TASK_DESCRIPTION_PROMPT: &str = r#"You are analyzing a recorded browser automation session. Your task is to generate a reusable task description that a COMPUTER USE AI AGENT will follow to replicate this workflow.
+
+IMPORTANT CONTEXT:
+- The AI agent uses tools like click_element, input_text, go_to_url to interact with a browser
+- The agent sees both screenshots AND structured element data to identify targets
+- The description must be GENERIC and REUSABLE - use placeholders like {{variable_name}} for any user-specific data
 
 You will see:
 1. The starting URL
 2. Each action with its type, selector, and value
-3. BEFORE and AFTER screenshots for each step
+3. BEFORE and AFTER screenshots showing state changes
 
 Your response MUST use this exact format:
 
@@ -206,21 +211,21 @@ Your response MUST use this exact format:
 <description>
 Navigate to [URL]
 
-1. First action with specific details
-2. Second action with specific details
+1. First action description
+2. Second action description
 ...
 </description>
 
 Guidelines for the name:
 - Keep it short (3-6 words)
-- Describe the main goal (e.g., "Login to Dashboard", "Submit Contact Form", "Search for Product")
+- Describe the main goal (e.g., "Login to Dashboard", "Submit Contact Form", "Google Search")
 
 Guidelines for the description:
 - Start with the URL to navigate to
-- Describe each action in clear, step-by-step detail
-- Use specific visual identifiers (button text, input labels, colors, positions)
-- Include any text that was typed or options that were selected
-- Be detailed enough for an AI agent to replicate without seeing the screenshots
+- Describe each action clearly and concisely
+- Use {{variable_name}} placeholders for user-specific data that should be configurable:
+  - {{email}}, {{password}}, {{search_query}}, {{username}}, etc.
+- If a navigation happened without a visible click (URL bar), describe it as "Navigate to [URL]"
 
 Example response:
 
@@ -228,11 +233,11 @@ Example response:
 <description>
 Navigate to https://example.com/admin
 
-1. Click the "Sign In" button in the top-right corner of the navigation bar
-2. In the email input field (labeled "Email Address"), type the email address
-3. In the password field below the email field, type the password
-4. Click the blue "Log In" button below the password field
-5. Wait for the dashboard to load
+1. Click the "Sign In" button
+2. Enter {{email}} in the email field
+3. Enter {{password}} in the password field
+4. Click the "Log In" button
+5. Verify the dashboard loads
 </description>
 
 Generate the name and description now:"#;

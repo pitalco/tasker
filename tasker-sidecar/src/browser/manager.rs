@@ -8,7 +8,7 @@ use chromiumoxide::cdp::browser_protocol::dom::{
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
-use chromiumoxide::cdp::browser_protocol::page::{AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat};
+use chromiumoxide::cdp::browser_protocol::page::{AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat, EventFrameNavigated};
 use chromiumoxide::cdp::js_protocol::runtime::{AddBindingParams, EventBindingCalled};
 use chromiumoxide::listeners::EventStream;
 use chromiumoxide::Page;
@@ -553,6 +553,21 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to create event listener: {}", e))?;
 
         tracing::debug!("CDP binding '{}' set up for instant event capture", binding_name);
+        Ok(event_stream)
+    }
+
+    /// Set up a listener for page navigation events
+    /// Returns an event stream that receives EventFrameNavigated events
+    pub async fn setup_navigation_listener(&self) -> Result<EventStream<EventFrameNavigated>> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        let event_stream = page.event_listener::<EventFrameNavigated>().await
+            .map_err(|e| anyhow!("Failed to create navigation listener: {}", e))?;
+
+        tracing::debug!("Navigation event listener set up");
         Ok(event_stream)
     }
 

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use chromiumoxide::cdp::browser_protocol::page::EventFrameNavigated;
 use chromiumoxide::cdp::js_protocol::runtime::EventBindingCalled;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -265,12 +266,17 @@ impl BrowserRecorder {
             .setup_event_binding("__taskerCaptureEvent")
             .await?;
 
+        // Set up navigation listener to capture screenshots on URL changes
+        let nav_stream = self.browser
+            .setup_navigation_listener()
+            .await?;
+
         // Register script to run on EVERY new document (survives navigations!)
         // This will auto-inject when we navigate to the target URL
         self.browser.add_script_on_new_document(RECORDING_SCRIPT).await?;
 
         // Start event listener in background
-        self.spawn_event_listener(event_stream);
+        self.spawn_event_listener(event_stream, nav_stream);
 
         // NOW navigate to target URL - recording script will auto-inject as page loads
         self.browser.navigate(start_url).await?;
@@ -280,8 +286,12 @@ impl BrowserRecorder {
         Ok(session)
     }
 
-    /// Spawn background task to listen for CDP binding events (INSTANT, no polling!)
-    fn spawn_event_listener(&self, mut event_stream: chromiumoxide::listeners::EventStream<EventBindingCalled>) {
+    /// Spawn background task to listen for CDP binding events and navigation events
+    fn spawn_event_listener(
+        &self,
+        mut event_stream: chromiumoxide::listeners::EventStream<EventBindingCalled>,
+        mut nav_stream: chromiumoxide::listeners::EventStream<EventFrameNavigated>,
+    ) {
         let browser = Arc::clone(&self.browser);
         let session = Arc::clone(&self.session);
         let step_order = Arc::clone(&self.step_order);
@@ -290,9 +300,6 @@ impl BrowserRecorder {
         let last_screenshot = Arc::clone(&self.last_screenshot);
 
         tokio::spawn(async move {
-            let mut last_url = String::new();
-            let mut url_check_count: u32 = 0;
-
             // Take initial screenshot before any user actions
             // This becomes the "before" screenshot for the first action
             match browser.screenshot().await {
@@ -311,6 +318,30 @@ impl BrowserRecorder {
                     _ = cancel_rx.recv() => {
                         tracing::info!("Recording event listener cancelled");
                         break;
+                    }
+                    // Listen for navigation events - update screenshot when page changes
+                    maybe_nav = nav_stream.next() => {
+                        if let Some(nav_event) = maybe_nav {
+                            // Only care about main frame navigations
+                            if nav_event.frame.parent_id.is_none() {
+                                let url = nav_event.frame.url.clone();
+                                tracing::debug!("Navigation detected: {}", url);
+
+                                // Wait for page to settle after navigation
+                                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+                                // Update rolling screenshot so next action has correct "before"
+                                match browser.screenshot().await {
+                                    Ok(screenshot) => {
+                                        *last_screenshot.lock().await = Some(screenshot);
+                                        tracing::debug!("Updated screenshot after navigation to {}", url);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to capture navigation screenshot: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Wait for CDP binding events (INSTANT when JS calls __taskerCaptureEvent)
                     maybe_event = event_stream.next() => {
@@ -364,17 +395,6 @@ impl BrowserRecorder {
 
                                         // Broadcast step
                                         let _ = step_sender.send(step);
-                                    }
-                                }
-
-                                // Track URL changes for logging (script auto-injects via addScriptToEvaluateOnNewDocument)
-                                url_check_count += 1;
-                                if url_check_count.is_multiple_of(10) {
-                                    if let Ok(current_url) = browser.current_url().await {
-                                        if current_url != last_url && !last_url.is_empty() {
-                                            tracing::debug!("Navigation detected: {} -> {}", last_url, current_url);
-                                        }
-                                        last_url = current_url;
                                     }
                                 }
                             }
