@@ -164,13 +164,24 @@
 				console.warn('WebSocket failed, using polling');
 			}
 
+			// Convert workflow variables to map format
+			const variablesMap: Record<string, unknown> = {};
+			if (workflow.variables) {
+				for (const v of workflow.variables) {
+					if (v.default_value !== undefined) {
+						variablesMap[v.name] = v.default_value;
+					}
+				}
+			}
+
 			const response = await startReplay({
 				workflow,
 				llm_provider: llmProvider,
 				llm_model: llmModel,
 				task_description: taskDescription || undefined,
 				iterations,
-				headless
+				headless,
+				variables: variablesMap
 			});
 
 			sessionId = response.session_id;
@@ -199,6 +210,10 @@
 		if (statusPolling) {
 			clearInterval(statusPolling);
 			statusPolling = null;
+		}
+		// Navigate to run details page
+		if (sessionId) {
+			goto(`/runs/${sessionId}`);
 		}
 	}
 

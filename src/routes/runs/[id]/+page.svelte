@@ -9,10 +9,12 @@
 		formatRelativeTime,
 		formatDuration
 	} from '$lib/services/runsService';
+	import { getWebSocket, startSidecar } from '$lib/services/sidecarService';
 	import { marked } from 'marked';
 	import type { RunStep } from '$lib/types/run';
 
 	const runsState = getRunsState();
+	const ws = getWebSocket();
 
 	// Format step into human-readable display
 	function formatStepDisplay(step: RunStep): string {
@@ -57,46 +59,70 @@
 	}
 
 	let activeTab = $state<'steps' | 'result'>('result');
-	let autoRefresh = $state(false);
-	let refreshInterval: ReturnType<typeof setInterval> | null = null;
+	let isLive = $state(false);
 
-	$effect(() => {
-		const runId = $page.params.id;
-		if (runId) {
+	const runId = $derived($page.params.id);
+
+	// WebSocket event handlers
+	function handleStepUpdate(data: unknown) {
+		const stepData = data as { session_id: string };
+		if (stepData.session_id === runId) {
+			// Reload steps from DB since WebSocket sends simplified StepResult, not full RunStep
 			runsState.loadRun(runId);
+		}
+	}
+
+	function handleComplete(data: unknown) {
+		const completeData = data as { session_id: string };
+		if (completeData.session_id === runId) {
+			// Auto-switch to result tab and refresh to get final result
+			activeTab = 'result';
+			runsState.loadRun(runId);
+			isLive = false;
+		}
+	}
+
+	onMount(async () => {
+		// Load run data from DB
+		if (runId) {
+			await runsState.loadRun(runId);
+		}
+
+		// Connect to WebSocket for real-time updates
+		try {
+			await startSidecar();
+			await ws.connect();
+
+			// Add event listeners
+			ws.on('replay_step', handleStepUpdate);
+			ws.on('replay_complete', handleComplete);
+
+			// Check if run is active
+			if (runsState.currentRun?.status === 'running' || runsState.currentRun?.status === 'pending') {
+				isLive = true;
+			}
+		} catch {
+			console.warn('WebSocket connection failed, viewing historical data only');
 		}
 	});
 
+	// Track live status based on run state
 	$effect(() => {
-		// Auto-refresh when run is active
 		if (runsState.currentRun?.status === 'running' || runsState.currentRun?.status === 'pending') {
-			if (!refreshInterval) {
-				autoRefresh = true;
-				refreshInterval = setInterval(() => {
-					const runId = $page.params.id;
-					if (runId) {
-						runsState.loadRun(runId);
-					}
-				}, 2000);
-			}
+			isLive = true;
 		} else {
-			if (refreshInterval) {
-				clearInterval(refreshInterval);
-				refreshInterval = null;
-				autoRefresh = false;
-			}
+			isLive = false;
 		}
 	});
 
 	onDestroy(() => {
-		if (refreshInterval) {
-			clearInterval(refreshInterval);
-		}
+		// Clean up WebSocket listeners
+		ws.off('replay_step', handleStepUpdate);
+		ws.off('replay_complete', handleComplete);
 		runsState.clearCurrent();
 	});
 
 	async function handleCancel() {
-		const runId = $page.params.id;
 		if (runId) {
 			await runsState.cancelRun(runId);
 		}
@@ -130,7 +156,7 @@
 				</p>
 			{/if}
 		</div>
-		{#if autoRefresh}
+		{#if isLive}
 			<div class="flex items-center gap-2 px-3 py-2 bg-brutal-cyan border-2 border-black">
 				<div class="w-3 h-3 bg-black rounded-full animate-pulse"></div>
 				<span class="font-bold text-sm">LIVE</span>
@@ -197,6 +223,22 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Progress bar when running -->
+		{#if isLive}
+			<div class="card-brutal bg-white p-4">
+				<div class="flex justify-between mb-2">
+					<span class="font-bold text-black">Progress</span>
+					<span class="font-bold text-black/60">{runsState.currentSteps.length} steps</span>
+				</div>
+				<div class="h-4 border-3 border-black bg-white relative overflow-hidden" style="box-shadow: 2px 2px 0 0 #000;">
+					<!-- Animated fill bar -->
+					<div class="absolute inset-0 bg-brutal-lime animate-progress-pulse"></div>
+					<!-- Moving stripes overlay -->
+					<div class="absolute inset-0 opacity-30 animate-progress-stripes" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, #000 10px, #000 12px);"></div>
+				</div>
+			</div>
+		{/if}
 
 		<!-- Tabs -->
 		<div class="flex gap-2 border-b-3 border-black">

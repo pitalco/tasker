@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
 use genai::Client;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -76,6 +77,27 @@ impl RunExecutor {
         // Add custom instructions if provided
         if let Some(instructions) = &run.custom_instructions {
             user_prompt.push_str(&format!("\n\nAdditional instructions:\n{}", instructions));
+        }
+
+        // Extract variables from metadata for use in tool parameter substitution
+        let variables: HashMap<String, String> = run
+            .metadata
+            .get("variables")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Add variable names to prompt if any exist
+        if !variables.is_empty() {
+            let var_names: Vec<String> = variables.keys().map(|k| format!("- {}", k)).collect();
+            user_prompt.push_str(&format!(
+                "\n\n<variables>\nAvailable variables (use {{{{variable_name}}}} syntax):\n{}\n</variables>",
+                var_names.join("\n")
+            ));
         }
 
         // Create selector map storage (will be updated before each LLM call)
@@ -162,9 +184,12 @@ impl RunExecutor {
                 let tool_name = &tool_call.fn_name;
                 let params: Value = tool_call.fn_arguments.clone();
 
-                self.logger.info(run_id, format!("Executing tool: {} with params: {}", tool_name, params));
+                // Resolve variables in parameters before execution
+                let resolved_params = resolve_variables(&params, &variables);
 
-                // Create step record
+                self.logger.info(run_id, format!("Executing tool: {} with params: {}", tool_name, resolved_params));
+
+                // Create step record (store original params for logging, use resolved for execution)
                 let mut step = RunStep::new(
                     run_id.clone(),
                     step_number as i32,
@@ -172,10 +197,13 @@ impl RunExecutor {
                     params.clone(),
                 );
 
+                // Persist step to DB (no broadcast until complete)
+                self.logger.step(&step);
+
                 let start = std::time::Instant::now();
 
-                // Execute the tool
-                let result = match self.registry.execute(tool_name, params, &ctx).await {
+                // Execute the tool with resolved parameters
+                let result = match self.registry.execute(tool_name, resolved_params, &ctx).await {
                     Ok(r) => r,
                     Err(e) => ToolResult::error(format!("Tool execution error: {}", e)),
                 };
@@ -325,4 +353,19 @@ fn is_browser_tool(name: &str) -> bool {
             | "select_dropdown_option"
             | "execute_javascript"
     )
+}
+
+/// Replace {{variable_name}} placeholders in JSON params with actual values
+fn resolve_variables(params: &Value, variables: &HashMap<String, String>) -> Value {
+    if variables.is_empty() {
+        return params.clone();
+    }
+
+    let mut json_str = params.to_string();
+    for (name, value) in variables {
+        let pattern = format!("{{{{{}}}}}", name); // {{name}}
+        json_str = json_str.replace(&pattern, value);
+    }
+
+    serde_json::from_str(&json_str).unwrap_or_else(|_| params.clone())
 }

@@ -40,8 +40,8 @@
 						{workflow.name}
 					</h3>
 				</a>
-				{#if workflow.description}
-					<p class="text-sm text-black/60 mt-1 line-clamp-2 font-medium">{workflow.description}</p>
+				{#if workflow.task_description}
+					<p class="text-sm text-black/60 mt-1 line-clamp-2 font-medium">{workflow.task_description}</p>
 				{/if}
 			</div>
 

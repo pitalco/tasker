@@ -142,7 +142,7 @@
 {:else}
 <div class="min-h-screen bg-brutal-bg">
 	<!-- Sidebar (fixed) -->
-	<aside class="fixed top-0 left-0 w-72 h-screen bg-brutal-yellow border-r-4 border-black flex flex-col z-40">
+	<aside class="fixed top-0 left-0 w-56 h-screen bg-brutal-yellow border-r-4 border-black flex flex-col z-40">
 		<!-- Logo -->
 		<div class="p-6 border-b-4 border-black">
 			<div class="flex items-center gap-3">
@@ -201,7 +201,7 @@
 	</aside>
 
 	<!-- Main content (offset by sidebar width) -->
-	<main class="ml-72 min-h-screen p-8 overflow-auto">
+	<main class="ml-56 min-h-screen p-8 overflow-auto">
 		{@render children()}
 	</main>
 </div>

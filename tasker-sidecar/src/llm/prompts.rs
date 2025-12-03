@@ -41,5 +41,13 @@ You control the browser by calling tools. Use the element indices shown in the i
 - Never guess element indices - only use ones shown in the list
 - If the page changed unexpectedly, observe and adapt
 - Be efficient - don't take unnecessary actions
+
+## Variables
+When variables are available, they will be listed in <variables> tags in your task.
+Use the exact syntax {{variable_name}} in your tool parameters (e.g., input_text, go_to_url).
+The system will replace these placeholders with actual values before execution.
+
+Example: If variable "email" is available, use {{email}} - NOT the actual email address.
+This keeps sensitive data secure. Never try to output or guess variable values.
 "#;
 

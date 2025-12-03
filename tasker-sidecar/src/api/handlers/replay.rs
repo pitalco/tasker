@@ -69,11 +69,13 @@ pub async fn start_replay(
         None, // custom_instructions
     );
 
-    // Add workflow steps as hints in metadata
+    // Add workflow steps as hints in metadata, include variables for substitution
     let hints = serde_json::to_value(&workflow.steps).unwrap_or_default();
+    let variables = serde_json::to_value(&request.variables).unwrap_or_default();
     run.metadata = json!({
         "hints": hints,
         "start_url": workflow.start_url,
+        "variables": variables,
     });
 
     let run_id = run.id.clone();

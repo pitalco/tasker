@@ -168,14 +168,14 @@
 								<div class="flex items-center gap-2">
 									<button
 										onclick={(e) => { e.stopPropagation(); handleDelete(run.id); }}
-										class="px-3 py-2 bg-brutal-magenta border-2 border-black font-bold text-sm"
+										class="px-3 py-2 bg-brutal-magenta border-2 border-black font-bold text-sm cursor-pointer hover:-translate-y-0.5 transition-transform"
 										style="box-shadow: 2px 2px 0 0 #000;"
 									>
 										CONFIRM
 									</button>
 									<button
 										onclick={cancelDelete}
-										class="px-3 py-2 bg-white border-2 border-black font-bold text-sm"
+										class="px-3 py-2 bg-white border-2 border-black font-bold text-sm cursor-pointer hover:-translate-y-0.5 transition-transform"
 										style="box-shadow: 2px 2px 0 0 #000;"
 									>
 										CANCEL

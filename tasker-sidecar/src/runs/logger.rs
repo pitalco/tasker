@@ -103,28 +103,22 @@ impl RunLogger {
         });
     }
 
-    /// Record a step execution
+    /// Create a step in DB (no broadcast - use update_step after completion)
     pub fn step(&self, step: &RunStep) {
-        // Persist to database
+        // Persist to database only - no broadcast until step completes
         if let Err(e) = self.repository.create_step(step) {
             tracing::error!("Failed to persist step: {}", e);
         }
-
-        // Broadcast to WebSocket clients
-        let _ = self.broadcast.send(RunEvent::Step {
-            run_id: step.run_id.clone(),
-            step: step.clone(),
-        });
     }
 
-    /// Update a step after execution
+    /// Update a step after execution and broadcast to clients
     pub fn update_step(&self, step: &RunStep) {
         // Update in database
         if let Err(e) = self.repository.update_step(step) {
             tracing::error!("Failed to update step: {}", e);
         }
 
-        // Broadcast updated step to WebSocket clients
+        // Broadcast completed step to WebSocket clients
         let _ = self.broadcast.send(RunEvent::Step {
             run_id: step.run_id.clone(),
             step: step.clone(),

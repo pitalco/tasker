@@ -20,7 +20,7 @@
 			const query = searchQuery.toLowerCase();
 			workflows = workflows.filter(w =>
 				w.name.toLowerCase().includes(query) ||
-				(w.description?.toLowerCase().includes(query))
+				(w.task_description?.toLowerCase().includes(query))
 			);
 		}
 
