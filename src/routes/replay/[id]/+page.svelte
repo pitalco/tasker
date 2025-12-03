@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getWorkflowState } from '$lib/stores/workflow.svelte';
 	import {
@@ -31,7 +31,32 @@
 	let currentStep = $state(0);
 	let totalSteps = $state(0);
 	let statusPolling = $state<ReturnType<typeof setInterval> | null>(null);
-	let results = $state<Array<{ step_id: string; success: boolean; error?: string }>>([]);
+	let results = $state<Array<{ step_id: string; success: boolean; error?: string; tool_name?: string; tool_params?: string }>>([]);
+
+	// Friendly display names for tools
+	const toolDisplayNames: Record<string, string> = {
+		'click_element': 'Clicked on element',
+		'input_text': 'Typed text',
+		'select_dropdown_option': 'Selected option',
+		'go_to_url': 'Navigated to URL',
+		'search_google': 'Searched Google',
+		'scroll_down': 'Scrolled down',
+		'scroll_up': 'Scrolled up',
+		'go_back': 'Went back',
+		'send_keys': 'Pressed keys',
+		'execute_javascript': 'Ran script',
+		'extract_page_content': 'Extracted content',
+		'get_dropdown_options': 'Got dropdown options',
+		'read_file': 'Read file',
+		'write_file': 'Wrote file',
+		'replace_in_file': 'Replaced in file',
+		'done': 'Completed task'
+	};
+
+	function getToolDisplay(toolName?: string): string {
+		if (!toolName) return 'Processing';
+		return toolDisplayNames[toolName] || toolName;
+	}
 
 	// Settings - AI is ALWAYS used, recorded steps are hints
 	let llmProvider = $state('google');
@@ -88,6 +113,18 @@
 		isLoading = false;
 	});
 
+	onDestroy(() => {
+		// Clean up listeners when component unmounts
+		ws.off('replay_step', handleStepResult);
+		ws.off('replay_complete', handleComplete);
+		ws.off('error', handleError);
+
+		// Clear polling interval if active
+		if (statusPolling) {
+			clearInterval(statusPolling);
+		}
+	});
+
 	$effect(() => {
 		// Update model when provider changes (ensure valid model for provider)
 		const models = PROVIDER_MODELS[llmProvider] || [];
@@ -113,6 +150,13 @@
 			// Connect WebSocket
 			try {
 				await ws.connect();
+
+				// Clear any stale listeners first (defensive)
+				ws.off('replay_step', handleStepResult);
+				ws.off('replay_complete', handleComplete);
+				ws.off('error', handleError);
+
+				// Add fresh listeners
 				ws.on('replay_step', handleStepResult);
 				ws.on('replay_complete', handleComplete);
 				ws.on('error', handleError);
@@ -143,7 +187,7 @@
 	}
 
 	function handleStepResult(data: unknown) {
-		const stepData = data as { result: { step_id: string; success: boolean; error?: string } };
+		const stepData = data as { result: { step_id: string; success: boolean; error?: string; tool_name?: string; tool_params?: string } };
 		if (stepData.result) {
 			results = [...results, stepData.result];
 			currentStep = results.length;
@@ -432,7 +476,7 @@
 							<span class="w-5 h-5 flex items-center justify-center text-xs font-bold {result.success ? 'bg-brutal-lime' : 'bg-brutal-magenta'}">
 								{result.success ? '✓' : '✗'}
 							</span>
-							<span>Step {i + 1}</span>
+							<span>Step {i + 1}: {getToolDisplay(result.tool_name)}</span>
 							{#if result.error}
 								<span class="text-black/60">- {result.error}</span>
 							{/if}

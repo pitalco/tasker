@@ -3,106 +3,210 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use serde_json::json;
 use std::sync::Arc;
 
-use crate::agent::WorkflowAgent;
-use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse};
+use crate::browser::BrowserManager;
+use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse, StepResult, Viewport};
+use crate::runs::{ExecutorConfig, Run, RunEvent, RunExecutor, RunLogger, RunStatus};
 
 use super::super::state::{AppState, WsEvent};
 
+/// Convert RunStep to StepResult for WebSocket compatibility
+fn step_to_result(step: &crate::runs::RunStep) -> StepResult {
+    let params_str = step.params.to_string();
+    // Truncate long params for display
+    let params_display = if params_str.len() > 100 {
+        format!("{}...", &params_str[..97])
+    } else {
+        params_str
+    };
+
+    if step.success {
+        StepResult::success_with_tool(
+            step.id.clone(),
+            step.duration_ms as i32,
+            step.tool_name.clone(),
+            params_display,
+        )
+    } else {
+        StepResult::failure_with_tool(
+            step.id.clone(),
+            step.error.clone().unwrap_or_default(),
+            step.tool_name.clone(),
+            params_display,
+        )
+    }
+}
+
 /// Start a workflow replay session
-/// AI agent is ALWAYS used - recorded workflow serves as hints/context
+/// Uses RunExecutor for execution with database persistence
 pub async fn start_replay(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartReplayRequest>,
 ) -> Result<Json<StartReplayResponse>, (StatusCode, String)> {
-    // Debug: log the task description being received
-    println!("========== REPLAY REQUEST ==========");
-    println!("task_description: {:?}", request.task_description);
-    println!("=====================================");
+    tracing::info!("Starting replay with task_description: {:?}", request.task_description);
 
     let mut workflow = request.workflow.clone();
 
     // Resolve start_url from metadata or first navigate step if not set
-    tracing::info!("Workflow start_url BEFORE resolve: '{}'", workflow.start_url);
-    tracing::info!("Workflow metadata.start_url: {:?}", workflow.metadata.start_url);
-    tracing::info!("Workflow steps count: {}", workflow.steps.len());
-
     workflow.resolve_start_url();
+    tracing::info!("Workflow start_url resolved to: '{}'", workflow.start_url);
 
-    tracing::info!("Workflow start_url AFTER resolve: '{}'", workflow.start_url);
+    // Get repository for persistence
+    let repo = state.runs_repository.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Runs repository not initialized".to_string(),
+        )
+    })?;
 
-    // AI agent is ALWAYS used - no mechanical replay
+    // Create Run from workflow
+    let mut run = Run::new(
+        Some(workflow.id.clone()),
+        Some(workflow.name.clone()),
+        request.task_description.clone(),
+        None, // custom_instructions
+    );
+
+    // Add workflow steps as hints in metadata
+    let hints = serde_json::to_value(&workflow.steps).unwrap_or_default();
+    run.metadata = json!({
+        "hints": hints,
+        "start_url": workflow.start_url,
+    });
+
+    let run_id = run.id.clone();
+
+    // Save to database
+    repo.create_run(&run).map_err(|e| {
+        tracing::error!("Failed to create run: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
+
+    // Store in active runs for tracking
+    state.active_runs.insert(run_id.clone(), run.clone());
+
+    // Get LLM config
     let provider = request.llm_provider.as_deref().unwrap_or("google");
     let model = request.llm_model.as_deref().unwrap_or("gemini-3-pro-preview");
 
-    // Load API key from local config (not passed via HTTP)
+    // Load API key from local config
     let api_key = crate::config::get_api_key(provider);
 
-    let agent = WorkflowAgent::from_provider(provider, model, api_key)
-        .map_err(|e| {
-            tracing::error!("Failed to create agent: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        })?;
+    // Set up environment variable for the provider
+    if let Some(ref key) = api_key {
+        let env_var = match provider {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "google" | "gemini" => "GEMINI_API_KEY",
+            _ => "ANTHROPIC_API_KEY",
+        };
+        std::env::set_var(env_var, key);
+    }
 
-    let agent = Arc::new(agent);
+    // Create browser manager
+    let browser = Arc::new(BrowserManager::new());
 
-    // Start execution - workflow steps serve as hints for the AI
-    let mut result_rx = agent
-        .execute(
-            &workflow,
-            request.task_description.clone(),
-            request.variables.clone(),
-            request.iterations,
-            request.headless,
-        )
+    // Get viewport from workflow metadata
+    let viewport = workflow.metadata.browser_viewport.clone().unwrap_or(Viewport {
+        width: 1280,
+        height: 720,
+    });
+
+    // Launch browser
+    browser
+        .launch_incognito(&workflow.start_url, request.headless, Some(viewport))
         .await
         .map_err(|e| {
-            tracing::error!("Failed to start agent: {}", e);
+            tracing::error!("Failed to launch browser: {}", e);
+            // Clean up the run record
+            let _ = repo.update_run_status(&run_id, RunStatus::Failed, Some(&e.to_string()));
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
 
-    // Get session
-    let session = agent.session().await.ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Failed to get session".to_string(),
-    ))?;
+    // Create logger and executor
+    let logger = RunLogger::new(repo.clone());
 
-    let session_id = session.id.clone();
+    let config = ExecutorConfig {
+        model: model.to_string(),
+        api_key,
+        max_steps: 50,
+        headless: request.headless,
+    };
 
-    // Forward results to WebSocket
+    let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);
+
+    // Subscribe to logger events and forward to WebSocket
+    let mut event_rx = logger.subscribe();
     let ws_broadcast = state.ws_broadcast.clone();
-    let sid = session_id.clone();
-    let agent_clone: Arc<WorkflowAgent> = Arc::clone(&agent);
+    let run_id_ws = run_id.clone();
 
     tokio::spawn(async move {
-        while let Ok(result) = result_rx.recv().await {
-            let _ = ws_broadcast.send(WsEvent::ReplayStep {
-                session_id: sid.clone(),
-                result,
-            });
-        }
-
-        // Send completion event
-        if let Some(final_session) = agent_clone.session().await {
-            let _ = ws_broadcast.send(WsEvent::ReplayComplete {
-                session_id: sid.clone(),
-                session: final_session,
-            });
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                RunEvent::Step { run_id: rid, step } => {
+                    // Convert RunStep to StepResult for WebSocket
+                    let result = step_to_result(&step);
+                    let _ = ws_broadcast.send(WsEvent::ReplayStep {
+                        session_id: rid,
+                        result,
+                    });
+                }
+                RunEvent::Status { run_id: rid, status, error } => {
+                    if status == RunStatus::Completed || status == RunStatus::Failed {
+                        // Build a minimal ReplaySession for compatibility
+                        let session = crate::models::ReplaySession {
+                            id: rid.clone(),
+                            workflow_id: run_id_ws.clone(),
+                            status: status.as_str().to_string(),
+                            current_step: 0,
+                            total_steps: 0,
+                            results: Vec::new(),
+                            variables: std::collections::HashMap::new(),
+                            error,
+                            started_at: None,
+                            completed_at: None,
+                        };
+                        let _ = ws_broadcast.send(WsEvent::ReplayComplete {
+                            session_id: rid,
+                            session,
+                        });
+                    }
+                }
+                RunEvent::Log { .. } => {
+                    // Logs are persisted to DB, no WebSocket broadcast needed
+                }
+            }
         }
     });
 
-    // Store active agent
-    state.active_agents.insert(session_id.clone(), agent);
+    // Execute in background
+    let run_for_exec = run.clone();
+    let browser_for_cleanup = Arc::clone(&browser);
+    let state_for_cleanup = Arc::clone(&state);
+    let run_id_for_cleanup = run_id.clone();
 
-    tracing::info!(
-        "Started AI agent session {} for workflow: {}",
-        session_id,
-        workflow.id
-    );
+    tokio::spawn(async move {
+        let result = executor.execute(&run_for_exec).await;
+
+        if let Err(e) = result {
+            tracing::error!("Run execution failed: {}", e);
+        }
+
+        // Clean up browser
+        let _ = browser_for_cleanup.close().await;
+
+        // Remove from active runs
+        state_for_cleanup.active_runs.remove(&run_id_for_cleanup);
+
+        tracing::info!("Run {} completed and cleaned up", run_id_for_cleanup);
+    });
+
+    tracing::info!("Started run {} for workflow: {}", run_id, workflow.id);
 
     Ok(Json(StartReplayResponse {
-        session_id,
+        session_id: run_id,
         status: "running".to_string(),
     }))
 }
@@ -112,17 +216,25 @@ pub async fn stop_replay(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let (_, agent) = state
-        .active_agents
-        .remove(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
-
-    agent.stop().await.map_err(|e| {
-        tracing::error!("Failed to stop agent: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    // Get repository
+    let repo = state.runs_repository.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Runs repository not initialized".to_string(),
+        )
     })?;
 
-    tracing::info!("Stopped session {}", session_id);
+    // Update status to cancelled in database
+    repo.update_run_status(&session_id, RunStatus::Cancelled, None)
+        .map_err(|e| {
+            tracing::error!("Failed to cancel run: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+
+    // Remove from active runs
+    state.active_runs.remove(&session_id);
+
+    tracing::info!("Stopped/cancelled run {}", session_id);
 
     Ok(Json(serde_json::json!({ "status": "stopped" })))
 }
@@ -132,21 +244,38 @@ pub async fn get_replay_status(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionStatusResponse>, (StatusCode, String)> {
-    let agent = state
-        .active_agents
-        .get(&session_id)
-        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+    // First check active runs
+    if let Some(run) = state.active_runs.get(&session_id) {
+        return Ok(Json(SessionStatusResponse {
+            session_id: session_id.clone(),
+            status: run.status.as_str().to_string(),
+            step_count: run.steps.len() as i32,
+            current_step: run.steps.len() as i32,
+            error: run.error.clone(),
+        }));
+    }
 
-    let session = agent.session().await.ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Failed to get session".to_string(),
-    ))?;
+    // Check repository for completed runs
+    let repo = state.runs_repository.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Runs repository not initialized".to_string(),
+        )
+    })?;
+
+    let run = repo
+        .get_run(&session_id)
+        .map_err(|e| {
+            tracing::error!("Failed to get run: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Session not found".to_string()))?;
 
     Ok(Json(SessionStatusResponse {
         session_id: session_id.clone(),
-        status: session.status,
-        step_count: session.total_steps,
-        current_step: session.current_step,
-        error: session.error,
+        status: run.status.as_str().to_string(),
+        step_count: run.steps.len() as i32,
+        current_step: run.steps.len() as i32,
+        error: run.error,
     }))
 }

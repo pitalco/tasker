@@ -109,6 +109,13 @@ export class SidecarWebSocket {
 	private listeners: Map<string, Set<(data: unknown) => void>> = new Map();
 
 	async connect(): Promise<void> {
+		// Close existing connection first to prevent duplicates
+		if (this.ws) {
+			this.ws.onclose = null; // Prevent reconnect attempt
+			this.ws.close();
+			this.ws = null;
+		}
+
 		const [, wsUrl] = await getSidecarUrls();
 
 		return new Promise((resolve, reject) => {

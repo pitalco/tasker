@@ -10,10 +10,9 @@ export interface Run {
 	custom_instructions?: string;
 	status: RunStatus;
 	error?: string;
-	started_at?: string;
+	result?: string;
+	started_at: string; // Also used as created_at
 	completed_at?: string;
-	created_at: string;
-	updated_at: string;
 	metadata: Record<string, unknown>;
 }
 
@@ -29,7 +28,7 @@ export interface RunStep {
 	error?: string;
 	screenshot?: string;
 	duration_ms: number;
-	created_at: string;
+	timestamp: string;
 }
 
 // Run log entry
@@ -38,7 +37,7 @@ export interface RunLog {
 	run_id: string;
 	level: 'debug' | 'info' | 'warn' | 'error';
 	message: string;
-	created_at: string;
+	timestamp: string;
 }
 
 // API responses

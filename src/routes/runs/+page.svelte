@@ -53,7 +53,7 @@
 	<div class="flex items-end justify-between">
 		<div>
 			<h1 class="text-4xl font-bold text-black tracking-tight">Runs</h1>
-			<p class="text-lg text-black/60 font-medium mt-1">Execution history and real-time logs</p>
+			<p class="text-lg text-black/60 font-medium mt-1">Execution history</p>
 		</div>
 	</div>
 
@@ -139,7 +139,7 @@
 									{formatRunStatus(run.status)}
 								</span>
 								<span class="text-sm font-medium text-black/60">
-									{formatRelativeTime(run.created_at)}
+									{formatRelativeTime(run.started_at)}
 								</span>
 							</div>
 							<h3 class="font-bold text-lg text-black truncate">
@@ -184,7 +184,7 @@
 							{:else}
 								<button
 									onclick={(e) => confirmDelete(run.id, e)}
-									class="px-3 py-2 bg-white border-2 border-black font-bold text-sm hover:-translate-y-0.5 transition-transform"
+									class="px-3 py-2 bg-white border-2 border-black font-bold text-sm hover:-translate-y-0.5 transition-transform cursor-pointer"
 									style="box-shadow: 2px 2px 0 0 #000;"
 								>
 									DELETE

@@ -96,6 +96,9 @@ pub struct Run {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The final result/response from the agent (markdown formatted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
     #[serde(default)]
     pub metadata: Value,
     /// Steps executed in this run (populated when fetching run details)
@@ -124,6 +127,7 @@ impl Run {
             started_at: Utc::now(),
             completed_at: None,
             error: None,
+            result: None,
             metadata: Value::Object(serde_json::Map::new()),
             steps: Vec::new(),
             logs: Vec::new(),

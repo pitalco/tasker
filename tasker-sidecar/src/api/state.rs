@@ -2,7 +2,6 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
-use crate::agent::WorkflowAgent;
 use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
 use crate::recording::BrowserRecorder;
 use crate::runs::{Run, RunRepository};
@@ -40,11 +39,7 @@ pub struct AppState {
     /// Active recording sessions: session_id -> recorder
     pub recordings: DashMap<String, ActiveRecorder>,
 
-    /// Active AI agent sessions: session_id -> agent
-    /// All replays now go through the AI agent (no mechanical replay)
-    pub active_agents: DashMap<String, Arc<WorkflowAgent>>,
-
-    /// Active runs: run_id -> run
+    /// Active runs: run_id -> run (for tracking running executions)
     pub active_runs: DashMap<String, Run>,
 
     /// Runs repository for persistence
@@ -76,7 +71,6 @@ impl AppState {
 
         Self {
             recordings: DashMap::new(),
-            active_agents: DashMap::new(),
             active_runs: DashMap::new(),
             runs_repository,
             ws_broadcast: tx,

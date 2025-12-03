@@ -16,7 +16,7 @@
 
 	// Editable fields
 	let editName = $state('');
-	let editDescription = $state('');
+	let editTaskDescription = $state('');
 	let editVariables = $state<WorkflowVariable[]>([]);
 
 	// UI state
@@ -35,7 +35,7 @@
 		if (found) {
 			workflow = found;
 			editName = found.name;
-			editDescription = found.description || '';
+			editTaskDescription = found.task_description || '';
 			editVariables = JSON.parse(JSON.stringify(found.variables || []));
 		}
 
@@ -55,7 +55,7 @@
 		try {
 			await workflowState.updateWorkflow(workflow.id, {
 				name: editName,
-				description: editDescription || undefined,
+				task_description: editTaskDescription || undefined,
 				variables: editVariables,
 				metadata: workflow.metadata
 			});
@@ -210,12 +210,12 @@
 				</div>
 
 				<div>
-					<label class="block text-sm font-bold text-black uppercase mb-2">Description</label>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Task Description</label>
 					<textarea
-						bind:value={editDescription}
+						bind:value={editTaskDescription}
 						oninput={markChanged}
 						class="input-brutal h-20 resize-none"
-						placeholder="What does this workflow do?"
+						placeholder="What does this workflow automate?"
 					></textarea>
 				</div>
 
@@ -305,7 +305,7 @@
 						<button
 							onclick={() => {
 								editName = workflow?.name || '';
-								editDescription = workflow?.description || '';
+								editTaskDescription = workflow?.task_description || '';
 								editVariables = JSON.parse(JSON.stringify(workflow?.variables || []));
 								hasChanges = false;
 							}}

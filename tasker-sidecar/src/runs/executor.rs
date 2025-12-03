@@ -108,6 +108,7 @@ impl RunExecutor {
         chat_req = chat_req.append_message(initial_message);
 
         let mut step_number = 0;
+        let mut first_iteration = true;
 
         // Agent loop
         loop {
@@ -120,6 +121,13 @@ impl RunExecutor {
                 );
                 break;
             }
+
+            // For subsequent iterations, take fresh screenshot and add page state RIGHT BEFORE LLM call
+            if !first_iteration {
+                let page_state = self.build_page_state_message(&selector_map).await;
+                chat_req = chat_req.append_message(page_state);
+            }
+            first_iteration = false;
 
             self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
 
@@ -229,6 +237,12 @@ impl RunExecutor {
                     } else {
                         RunStatus::Failed
                     };
+
+                    // Save the final result/response from the agent
+                    if let Some(ref content) = result.content {
+                        self.logger.result(run_id, content);
+                    }
+
                     self.logger.status(run_id, status, result.error.clone());
                 }
             }
@@ -239,14 +253,11 @@ impl RunExecutor {
             }
 
             // Append tool calls and responses to chat history
+            // (Page state with screenshot will be added at START of next iteration)
             chat_req = chat_req.append_message(tool_calls);
             for response in tool_responses {
                 chat_req = chat_req.append_message(response);
             }
-
-            // Add current page state with screenshot for next iteration
-            let page_state = self.build_page_state_message(&selector_map).await;
-            chat_req = chat_req.append_message(page_state);
         }
 
         Ok(())

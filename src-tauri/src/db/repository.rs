@@ -9,7 +9,7 @@ pub async fn get_all_workflows() -> Result<Vec<Workflow>, sqlx::Error> {
 
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, steps_json, variables_json, metadata_json,
+        SELECT id, name, steps_json, variables_json, metadata_json,
                created_at, updated_at, synced_at, version, is_deleted, task_description
         FROM workflows
         WHERE is_deleted = 0
@@ -24,7 +24,6 @@ pub async fn get_all_workflows() -> Result<Vec<Workflow>, sqlx::Error> {
         .map(|row| Workflow {
             id: row.get("id"),
             name: row.get("name"),
-            description: row.get("description"),
             steps_json: row.get("steps_json"),
             variables_json: row.get("variables_json"),
             metadata_json: row.get("metadata_json"),
@@ -45,7 +44,7 @@ pub async fn get_workflow_by_id(id: &str) -> Result<Option<Workflow>, sqlx::Erro
 
     let row = sqlx::query(
         r#"
-        SELECT id, name, description, steps_json, variables_json, metadata_json,
+        SELECT id, name, steps_json, variables_json, metadata_json,
                created_at, updated_at, synced_at, version, is_deleted, task_description
         FROM workflows
         WHERE id = ? AND is_deleted = 0
@@ -58,7 +57,6 @@ pub async fn get_workflow_by_id(id: &str) -> Result<Option<Workflow>, sqlx::Erro
     Ok(row.map(|r| Workflow {
         id: r.get("id"),
         name: r.get("name"),
-        description: r.get("description"),
         steps_json: r.get("steps_json"),
         variables_json: r.get("variables_json"),
         metadata_json: r.get("metadata_json"),
@@ -86,13 +84,12 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
 
     sqlx::query(
         r#"
-        INSERT INTO workflows (id, name, description, steps_json, variables_json, metadata_json, created_at, updated_at, version, task_description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        INSERT INTO workflows (id, name, steps_json, variables_json, metadata_json, created_at, updated_at, version, task_description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
         "#,
     )
     .bind(&id)
     .bind(&req.name)
-    .bind(&req.description)
     .bind(&steps_json)
     .bind(&variables_json)
     .bind(&metadata_json)
@@ -105,7 +102,6 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
     Ok(Workflow {
         id,
         name: req.name,
-        description: req.description,
         steps_json,
         variables_json,
         metadata_json,
@@ -132,8 +128,8 @@ pub async fn update_workflow(id: &str, req: UpdateWorkflowRequest) -> Result<Opt
     if let Some(name) = req.name {
         workflow.name = name;
     }
-    if let Some(desc) = req.description {
-        workflow.description = Some(desc);
+    if let Some(task_desc) = req.task_description {
+        workflow.task_description = Some(task_desc);
     }
     if let Some(steps) = req.steps {
         workflow.steps_json = serde_json::to_string(&steps).unwrap();
@@ -151,13 +147,13 @@ pub async fn update_workflow(id: &str, req: UpdateWorkflowRequest) -> Result<Opt
     sqlx::query(
         r#"
         UPDATE workflows
-        SET name = ?, description = ?, steps_json = ?, variables_json = ?, metadata_json = ?,
+        SET name = ?, task_description = ?, steps_json = ?, variables_json = ?, metadata_json = ?,
             updated_at = ?, version = ?
         WHERE id = ?
         "#,
     )
     .bind(&workflow.name)
-    .bind(&workflow.description)
+    .bind(&workflow.task_description)
     .bind(&workflow.steps_json)
     .bind(&workflow.variables_json)
     .bind(&workflow.metadata_json)

@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 pub struct Workflow {
     pub id: String,
     pub name: String,
-    pub description: Option<String>,
     pub steps_json: String,
     pub variables_json: String,
     pub metadata_json: String,
@@ -13,7 +12,7 @@ pub struct Workflow {
     pub synced_at: Option<String>,
     pub version: i32,
     pub is_deleted: bool,
-    /// Task description for text-only workflows
+    /// Task description - what this workflow automates
     pub task_description: Option<String>,
 }
 
@@ -52,21 +51,21 @@ pub struct WorkflowMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkflowRequest {
     pub name: String,
-    pub description: Option<String>,
     pub steps: Option<Vec<WorkflowStep>>,
     pub variables: Option<Vec<WorkflowVariable>>,
     pub metadata: Option<WorkflowMetadata>,
-    /// Task description for text-only workflows
+    /// Task description - what this workflow automates
     pub task_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateWorkflowRequest {
     pub name: Option<String>,
-    pub description: Option<String>,
     pub steps: Option<Vec<WorkflowStep>>,
     pub variables: Option<Vec<WorkflowVariable>>,
     pub metadata: Option<WorkflowMetadata>,
+    /// Task description - what this workflow automates
+    pub task_description: Option<String>,
 }
 
 // Frontend-friendly workflow representation
@@ -74,14 +73,13 @@ pub struct UpdateWorkflowRequest {
 pub struct WorkflowDto {
     pub id: String,
     pub name: String,
-    pub description: Option<String>,
     pub steps: Vec<WorkflowStep>,
     pub variables: Vec<WorkflowVariable>,
     pub metadata: WorkflowMetadata,
     pub created_at: String,
     pub updated_at: String,
     pub version: i32,
-    /// Task description for text-only workflows
+    /// Task description - what this workflow automates
     pub task_description: Option<String>,
 }
 
@@ -90,7 +88,6 @@ impl From<Workflow> for WorkflowDto {
         WorkflowDto {
             id: w.id,
             name: w.name,
-            description: w.description,
             steps: serde_json::from_str(&w.steps_json).unwrap_or_default(),
             variables: serde_json::from_str(&w.variables_json).unwrap_or_default(),
             metadata: serde_json::from_str(&w.metadata_json).unwrap_or(WorkflowMetadata {

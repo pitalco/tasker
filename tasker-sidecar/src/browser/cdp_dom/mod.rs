@@ -15,15 +15,19 @@ pub use types::{
 pub async fn extract_dom(page: &Page) -> Result<DOMExtractionResult> {
     // Get page info
     let (url, title) = extractor::get_page_info(page).await?;
+    tracing::debug!("DOM extraction: url={}, title={}", url, title);
 
     // Extract raw CDP trees
     let raw_trees = extractor::extract_trees(page).await?;
     let viewport = raw_trees.viewport.clone();
+    tracing::debug!("DOM extraction: viewport={:?}", viewport);
 
     // Build enhanced tree
     let tree = builder::build_enhanced_tree(raw_trees);
 
     let selector_map = if let Some(mut tree) = tree {
+        tracing::debug!("DOM extraction: tree built successfully");
+
         // Apply filters
         filter::filter_to_viewport(&mut tree, &viewport);
         filter::filter_by_paint_order(&mut tree, &viewport);
@@ -31,8 +35,11 @@ pub async fn extract_dom(page: &Page) -> Result<DOMExtractionResult> {
         filter::prune_tree(&mut tree);
 
         // Extract interactive elements
-        serializer::extract_interactive_elements(&tree)
+        let map = serializer::extract_interactive_elements(&tree);
+        tracing::debug!("DOM extraction: found {} interactive elements", map.len());
+        map
     } else {
+        tracing::warn!("DOM extraction: tree building returned None");
         SelectorMap::new()
     };
 

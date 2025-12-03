@@ -175,6 +175,7 @@ fn build_layout_lookup(snapshot: &Option<serde_json::Value>) -> HashMap<BackendN
 }
 
 /// Recursively build a node from JSON
+#[allow(clippy::only_used_in_recursion)]
 fn build_node_from_json(
     json: &serde_json::Value,
     ax_lookup: &HashMap<BackendNodeId, AXNodeData>,

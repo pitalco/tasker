@@ -9,10 +9,54 @@
 		formatRelativeTime,
 		formatDuration
 	} from '$lib/services/runsService';
+	import { marked } from 'marked';
+	import type { RunStep } from '$lib/types/run';
 
 	const runsState = getRunsState();
 
-	let activeTab = $state<'steps' | 'logs'>('steps');
+	// Format step into human-readable display
+	function formatStepDisplay(step: RunStep): string {
+		const params = step.params || {};
+
+		switch (step.tool_name) {
+			case 'search_google':
+				return `Searched Google(query: "${params.query || ''}")`;
+			case 'go_to_url':
+				return `Navigated to URL(${params.url || ''})`;
+			case 'click_element':
+				return `Clicked Element(index: ${params.index ?? ''})`;
+			case 'input_text':
+				const text = String(params.text || '');
+				const displayText = text.length > 30 ? text.slice(0, 27) + '...' : text;
+				return `Typed Text(index: ${params.index ?? ''}, text: "${displayText}")`;
+			case 'select_dropdown_option':
+				return `Selected Option(index: ${params.index ?? ''}, option: "${params.option || ''}")`;
+			case 'scroll_down':
+				return `Scrolled Down(${params.amount ? `${params.amount}px` : 'default'})`;
+			case 'scroll_up':
+				return `Scrolled Up(${params.amount ? `${params.amount}px` : 'default'})`;
+			case 'go_back':
+				return 'Went Back';
+			case 'send_keys':
+				return `Pressed Keys(${params.keys || ''})`;
+			case 'execute_javascript':
+				const script = String(params.script || '');
+				const displayScript = script.length > 40 ? script.slice(0, 37) + '...' : script;
+				return `Ran Script(${displayScript})`;
+			case 'extract_page_content':
+				return 'Extracted Page Content';
+			case 'get_dropdown_options':
+				return `Got Dropdown Options(index: ${params.index ?? ''})`;
+			case 'done':
+				return 'Completed Task';
+			default:
+				// Fallback: convert snake_case to Title Case
+				const readable = step.tool_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+				return readable;
+		}
+	}
+
+	let activeTab = $state<'steps' | 'result'>('result');
 	let autoRefresh = $state(false);
 	let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -69,7 +113,7 @@
 		<button
 			onclick={goBack}
 			aria-label="Go back to runs list"
-			class="p-2 bg-white border-3 border-black hover:-translate-y-0.5 transition-transform"
+			class="p-2 bg-white border-3 border-black hover:-translate-y-0.5 transition-transform cursor-pointer"
 			style="box-shadow: 2px 2px 0 0 #000;"
 		>
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
@@ -105,7 +149,7 @@
 	{:else if runsState.currentRun}
 		<!-- Status and metadata -->
 		<div class="card-brutal bg-white p-6">
-			<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+			<div class="grid grid-cols-2 md:grid-cols-3 gap-6">
 				<div>
 					<span class="text-xs font-bold text-black/60 uppercase">Status</span>
 					<div class="mt-1">
@@ -113,10 +157,6 @@
 							{formatRunStatus(runsState.currentRun.status)}
 						</span>
 					</div>
-				</div>
-				<div>
-					<span class="text-xs font-bold text-black/60 uppercase">Created</span>
-					<p class="font-bold mt-1">{formatRelativeTime(runsState.currentRun.created_at)}</p>
 				</div>
 				<div>
 					<span class="text-xs font-bold text-black/60 uppercase">Started</span>
@@ -160,21 +200,23 @@
 
 		<!-- Tabs -->
 		<div class="flex gap-2 border-b-3 border-black">
+			{#if runsState.currentRun?.result}
+				<button
+					onclick={() => (activeTab = 'result')}
+					class="px-6 py-3 font-bold border-3 border-black border-b-0 cursor-pointer {activeTab === 'result'
+						? 'bg-black text-white'
+						: 'bg-brutal-green text-black hover:bg-brutal-green/80'}"
+				>
+					RESULT
+				</button>
+			{/if}
 			<button
 				onclick={() => (activeTab = 'steps')}
-				class="px-6 py-3 font-bold border-3 border-black border-b-0 {activeTab === 'steps'
+				class="px-6 py-3 font-bold border-3 border-black border-b-0 cursor-pointer {activeTab === 'steps'
 					? 'bg-black text-white'
 					: 'bg-white text-black hover:bg-gray-100'}"
 			>
 				STEPS ({runsState.currentSteps.length})
-			</button>
-			<button
-				onclick={() => (activeTab = 'logs')}
-				class="px-6 py-3 font-bold border-3 border-black border-b-0 {activeTab === 'logs'
-					? 'bg-black text-white'
-					: 'bg-white text-black hover:bg-gray-100'}"
-			>
-				LOGS ({runsState.currentLogs.length})
 			</button>
 		</div>
 
@@ -194,7 +236,7 @@
 										<span class="w-8 h-8 flex items-center justify-center bg-black text-white font-bold text-sm">
 											{step.step_number}
 										</span>
-										<span class="font-bold text-lg">{step.tool_name}</span>
+										<span class="font-bold text-lg">{formatStepDisplay(step)}</span>
 										{#if step.success}
 											<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
 												<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
@@ -206,11 +248,6 @@
 										{/if}
 									</div>
 									<div class="pl-11">
-										{#if step.params && Object.keys(step.params).length > 0}
-											<div class="text-sm font-mono bg-gray-100 p-2 mb-2 overflow-x-auto">
-												{JSON.stringify(step.params, null, 2)}
-											</div>
-										{/if}
 										{#if step.error}
 											<p class="text-sm text-brutal-magenta font-medium">{step.error}</p>
 										{/if}
@@ -238,24 +275,12 @@
 			</div>
 		{/if}
 
-		<!-- Logs tab -->
-		{#if activeTab === 'logs'}
-			<div class="card-brutal bg-black text-white p-4 font-mono text-sm max-h-[600px] overflow-y-auto">
-				{#if runsState.currentLogs.length === 0}
-					<p class="text-white/60">No logs recorded yet</p>
-				{:else}
-					{#each runsState.currentLogs as log (log.id)}
-						<div class="flex gap-3 py-1 border-b border-white/10">
-							<span class="text-white/40 shrink-0">
-								{new Date(log.created_at).toLocaleTimeString()}
-							</span>
-							<span class="shrink-0 {log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-yellow-400' : log.level === 'debug' ? 'text-gray-400' : 'text-green-400'}">
-								[{log.level.toUpperCase()}]
-							</span>
-							<span class="break-all">{log.message}</span>
-						</div>
-					{/each}
-				{/if}
+		<!-- Result tab -->
+		{#if activeTab === 'result' && runsState.currentRun?.result}
+			<div class="card-brutal bg-white p-6">
+				<div class="prose prose-lg max-w-none">
+					{@html marked(runsState.currentRun.result)}
+				</div>
 			</div>
 		{/if}
 	{:else}

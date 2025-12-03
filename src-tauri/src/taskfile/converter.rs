@@ -52,7 +52,6 @@ pub fn taskfile_to_workflow(taskfile: &Taskfile) -> WorkflowDto {
     WorkflowDto {
         id: String::new(), // Will be set by repository
         name: taskfile.metadata.name.clone(),
-        description: taskfile.metadata.description.clone(),
         steps,
         variables,
         metadata: WorkflowMetadata {
@@ -63,7 +62,7 @@ pub fn taskfile_to_workflow(taskfile: &Taskfile) -> WorkflowDto {
         created_at: String::new(), // Will be set by repository
         updated_at: String::new(), // Will be set by repository
         version: 1,
-        task_description: None,
+        task_description: taskfile.metadata.description.clone(),
     }
 }
 
@@ -104,7 +103,7 @@ pub fn workflow_to_taskfile(workflow: &WorkflowDto) -> Taskfile {
         taskfile: "1.0".to_string(),
         metadata: TaskfileMetadata {
             name: workflow.name.clone(),
-            description: workflow.description.clone(),
+            description: workflow.task_description.clone(),
             version: format!("1.0.{}", workflow.version),
             author: None,
             tags: vec![],

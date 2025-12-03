@@ -204,8 +204,6 @@ fn default_recording_source() -> String {
 pub struct Workflow {
     pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
     #[serde(default)]
     pub start_url: String,
     #[serde(default)]
@@ -221,7 +219,7 @@ pub struct Workflow {
     // Extra fields from Tauri
     #[serde(default)]
     pub version: i32,
-    /// Task description for text-only workflows (AI figures out how to execute)
+    /// Task description - what this workflow automates
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_description: Option<String>,
 }
@@ -307,7 +305,6 @@ impl Workflow {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             name,
-            description: None,
             start_url,
             steps: Vec::new(),
             variables: HashMap::new(),
@@ -326,7 +323,6 @@ impl Workflow {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             name,
-            description: None,
             start_url: String::new(), // AI extracts from description
             steps: Vec::new(),
             variables: HashMap::new(),

@@ -1,4 +1,4 @@
-use super::types::{ElementIndex, EnhancedDOMNode, SelectorMap, SimplifiedElement};
+use super::types::{ElementIndex, EnhancedDOMNode, SelectOption, SelectorMap, SimplifiedElement};
 
 /// Extract interactive elements from tree and build selector map
 pub fn extract_interactive_elements(tree: &EnhancedDOMNode) -> SelectorMap {
@@ -44,6 +44,7 @@ fn collect_interactive(node: &EnhancedDOMNode, elements: &mut Vec<SimplifiedElem
 }
 
 /// Convert EnhancedDOMNode to SimplifiedElement
+#[allow(clippy::field_reassign_with_default)]
 fn node_to_simplified(node: &EnhancedDOMNode) -> SimplifiedElement {
     let mut elem = SimplifiedElement::default();
 
@@ -108,7 +109,80 @@ fn node_to_simplified(node: &EnhancedDOMNode) -> SimplifiedElement {
     // Get text content from children or node itself
     elem.text = get_text_content(node);
 
+    // For select elements, extract options from children
+    if node.tag_name.eq_ignore_ascii_case("select") {
+        elem.select_options = Some(extract_select_options(node));
+    }
+
     elem
+}
+
+/// Extract options from a select element's children
+fn extract_select_options(node: &EnhancedDOMNode) -> Vec<SelectOption> {
+    let mut options = Vec::new();
+
+    for child in &node.children {
+        if child.tag_name.eq_ignore_ascii_case("option") {
+            let value = child.attributes.get("value").cloned().unwrap_or_default();
+            let selected = child.attributes.contains_key("selected");
+
+            // Get text from child text nodes
+            let text = child
+                .children
+                .iter()
+                .filter(|c| c.node_type == 3) // TEXT_NODE
+                .filter_map(|c| c.text_content.as_deref())
+                .collect::<Vec<_>>()
+                .join("")
+                .trim()
+                .to_string();
+
+            // Use value as text if text is empty
+            let text = if text.is_empty() {
+                value.clone()
+            } else {
+                text
+            };
+
+            options.push(SelectOption {
+                value,
+                text,
+                selected,
+            });
+        } else if child.tag_name.eq_ignore_ascii_case("optgroup") {
+            // Handle optgroup - extract options from within
+            for opt_child in &child.children {
+                if opt_child.tag_name.eq_ignore_ascii_case("option") {
+                    let value = opt_child.attributes.get("value").cloned().unwrap_or_default();
+                    let selected = opt_child.attributes.contains_key("selected");
+
+                    let text = opt_child
+                        .children
+                        .iter()
+                        .filter(|c| c.node_type == 3)
+                        .filter_map(|c| c.text_content.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .trim()
+                        .to_string();
+
+                    let text = if text.is_empty() {
+                        value.clone()
+                    } else {
+                        text
+                    };
+
+                    options.push(SelectOption {
+                        value,
+                        text,
+                        selected,
+                    });
+                }
+            }
+        }
+    }
+
+    options
 }
 
 /// Get text content from a node (direct children only)
@@ -194,6 +268,14 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
         if let Some(v) = &elem.value {
             if !v.is_empty() && elem.tag != "button" {
                 attrs.push(format!("value={}", truncate_str(v, 30)));
+            }
+        }
+
+        // Options for select elements - show all available choices
+        if let Some(options) = &elem.select_options {
+            if !options.is_empty() {
+                let opt_texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+                attrs.push(format!("options=\"{}\"", opt_texts.join(",")));
             }
         }
 

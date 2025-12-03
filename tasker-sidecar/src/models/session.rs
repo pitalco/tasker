@@ -71,6 +71,10 @@ pub struct StepResult {
     pub step_id: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_params: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -85,6 +89,21 @@ impl StepResult {
         Self {
             step_id,
             success: true,
+            tool_name: None,
+            tool_params: None,
+            screenshot: None,
+            error: None,
+            duration_ms,
+            extracted_data: None,
+        }
+    }
+
+    pub fn success_with_tool(step_id: String, duration_ms: i32, tool_name: String, tool_params: String) -> Self {
+        Self {
+            step_id,
+            success: true,
+            tool_name: Some(tool_name),
+            tool_params: Some(tool_params),
             screenshot: None,
             error: None,
             duration_ms,
@@ -96,6 +115,21 @@ impl StepResult {
         Self {
             step_id,
             success: false,
+            tool_name: None,
+            tool_params: None,
+            screenshot: None,
+            error: Some(error),
+            duration_ms: 0,
+            extracted_data: None,
+        }
+    }
+
+    pub fn failure_with_tool(step_id: String, error: String, tool_name: String, tool_params: String) -> Self {
+        Self {
+            step_id,
+            success: false,
+            tool_name: Some(tool_name),
+            tool_params: Some(tool_params),
             screenshot: None,
             error: Some(error),
             duration_ms: 0,

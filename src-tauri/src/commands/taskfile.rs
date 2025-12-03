@@ -52,11 +52,10 @@ pub async fn import_taskfile(yaml_content: String) -> Result<ImportResult, Strin
     // Create workflow in database
     let request = db::CreateWorkflowRequest {
         name: workflow_dto.name.clone(),
-        description: workflow_dto.description.clone(),
         steps: Some(workflow_dto.steps),
         variables: Some(workflow_dto.variables),
         metadata: Some(workflow_dto.metadata),
-        task_description: None,
+        task_description: workflow_dto.task_description.clone(),
     };
 
     let workflow = db::create_workflow(request)

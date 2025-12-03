@@ -52,6 +52,14 @@ impl DOMRect {
     }
 }
 
+/// Option in a select dropdown
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectOption {
+    pub value: String,
+    pub text: String,
+    pub selected: bool,
+}
+
 /// Accessibility node data from AX tree
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AXNodeData {
@@ -214,7 +222,7 @@ impl EnhancedDOMNode {
 }
 
 /// Simplified element for LLM serialization and tool operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SimplifiedElement {
     pub index: ElementIndex,
     pub backend_node_id: BackendNodeId,
@@ -236,33 +244,8 @@ pub struct SimplifiedElement {
     pub bounds: DOMRect,
     pub in_shadow_dom: bool,
     pub frame_id: Option<String>,
-}
-
-impl Default for SimplifiedElement {
-    fn default() -> Self {
-        Self {
-            index: 0,
-            backend_node_id: 0,
-            tag: String::new(),
-            role: None,
-            name: None,
-            text: None,
-            input_type: None,
-            value: None,
-            placeholder: None,
-            aria_label: None,
-            title: None,
-            href: None,
-            checked: None,
-            selected: None,
-            disabled: None,
-            required: None,
-            readonly: None,
-            bounds: DOMRect::default(),
-            in_shadow_dom: false,
-            frame_id: None,
-        }
-    }
+    /// Options for select elements
+    pub select_options: Option<Vec<SelectOption>>,
 }
 
 /// Map from index to element for tool operations

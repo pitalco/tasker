@@ -367,7 +367,7 @@ impl Tool for SendKeysTool {
 
         // Map common key names to their JS keycode
         let script = format!(
-            r#"
+            r#"(function() {{
             const keyMap = {{
                 'Enter': {{ key: 'Enter', code: 'Enter', keyCode: 13 }},
                 'Tab': {{ key: 'Tab', code: 'Tab', keyCode: 9 }},
@@ -383,7 +383,7 @@ impl Tool for SendKeysTool {
             document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{ ...keyInfo, bubbles: true }}));
             document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {{ ...keyInfo, bubbles: true }}));
             return 'sent';
-            "#,
+            }})()"#,
             keys, keys, keys, keys
         );
 
@@ -496,7 +496,7 @@ impl Tool for FindTextTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'text' parameter"))?;
 
         let script = format!(
-            r#"
+            r#"(function() {{
             const searchText = '{}';
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
             const matches = [];
@@ -514,7 +514,7 @@ impl Tool for FindTextTool {
                 }}
             }}
             return JSON.stringify(matches.slice(0, 10));
-            "#,
+            }})()"#,
             text.replace('\'', "\\'")
         );
 
@@ -570,7 +570,7 @@ impl Tool for SelectDropdownTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'option' parameter"))?;
 
-        // Look up element from selector map
+        // Look up backend_node_id from selector map
         let selector_map = ctx.selector_map.read().await;
         let element = match selector_map.get_element_by_index(index) {
             Some(el) => el.clone(),
@@ -579,6 +579,7 @@ impl Tool for SelectDropdownTool {
                 index, selector_map.len()
             ))),
         };
+        let backend_id = element.backend_node_id;
         drop(selector_map);
 
         // Check if element is a select
@@ -589,38 +590,15 @@ impl Tool for SelectDropdownTool {
             )));
         }
 
-        // Use JavaScript to select option by clicking the element position
-        let script = format!(
-            r#"
-            const elements = document.elementsFromPoint({}, {});
-            for (const el of elements) {{
-                if (el.tagName === 'SELECT') {{
-                    const optionValue = '{}';
-                    for (const opt of el.options) {{
-                        if (opt.value === optionValue || opt.text === optionValue) {{
-                            el.value = opt.value;
-                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                            return 'selected';
-                        }}
-                    }}
-                    return 'option not found';
-                }}
-            }}
-            return 'select not found';
-            "#,
-            element.bounds.x + element.bounds.width / 2.0,
-            element.bounds.y + element.bounds.height / 2.0,
-            option.replace('\'', "\\'")
-        );
-
-        match ctx.browser.evaluate(&script).await? {
-            result if result.as_str() == Some("selected") => Ok(ToolResult::success(format!(
+        // Use backend_node_id for reliable selection (not coordinate-based)
+        match ctx.browser.select_option_by_backend_id(backend_id, option).await {
+            Ok(()) => Ok(ToolResult::success(format!(
                 "Selected option '{}' in dropdown [{}]",
                 option, index
             ))),
-            result => Ok(ToolResult::error(format!(
-                "Failed to select option '{}' in dropdown [{}]: {:?}",
-                option, index, result
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to select option '{}' in dropdown [{}]: {}",
+                option, index, e
             )))
         }
     }
@@ -672,31 +650,24 @@ impl Tool for GetDropdownOptionsTool {
             )));
         }
 
-        // Use JavaScript to get options at element position
-        let script = format!(
-            r#"
-            const elements = document.elementsFromPoint({}, {});
-            for (const el of elements) {{
-                if (el.tagName === 'SELECT') {{
-                    return JSON.stringify(Array.from(el.options).map(o => ({{ value: o.value, text: o.text, selected: o.selected }})));
-                }}
-            }}
-            return JSON.stringify([]);
-            "#,
-            element.bounds.x + element.bounds.width / 2.0,
-            element.bounds.y + element.bounds.height / 2.0
-        );
+        // Use cached options from SimplifiedElement (extracted during DOM parsing)
+        match &element.select_options {
+            Some(options) if !options.is_empty() => {
+                let options_json: Vec<Value> = options.iter().map(|o| json!({
+                    "value": o.value,
+                    "text": o.text,
+                    "selected": o.selected
+                })).collect();
 
-        let result = ctx.browser.evaluate(&script).await?;
-        let options: Vec<Value> = serde_json::from_str(result.as_str().unwrap_or("[]")).unwrap_or_default();
-
-        if options.is_empty() {
-            Ok(ToolResult::error(format!("No dropdown found at index [{}] or no options available", index)))
-        } else {
-            Ok(ToolResult::success_with_data(
-                format!("Found {} options in dropdown [{}]", options.len(), index),
-                json!({ "options": options })
-            ))
+                Ok(ToolResult::success_with_data(
+                    format!("Found {} options in dropdown [{}]", options.len(), index),
+                    json!({ "options": options_json })
+                ))
+            }
+            _ => Ok(ToolResult::error(format!(
+                "No options found for dropdown [{}]",
+                index
+            )))
         }
     }
 }

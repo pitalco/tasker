@@ -1,14 +1,13 @@
 export interface Workflow {
 	id: string;
 	name: string;
-	description?: string;
 	steps: WorkflowStep[];
 	variables: WorkflowVariable[];
 	metadata: WorkflowMetadata;
 	created_at: string;
 	updated_at: string;
 	version: number;
-	/** Task description for text-only workflows - AI figures out how to execute */
+	/** Task description - what this workflow automates */
 	task_description?: string;
 }
 
@@ -169,18 +168,18 @@ export interface WorkflowMetadata {
 
 export interface CreateWorkflowRequest {
 	name: string;
-	description?: string;
 	steps?: WorkflowStep[];
 	variables?: WorkflowVariable[];
 	metadata?: WorkflowMetadata;
-	/** Task description for text-only workflows */
+	/** Task description - what this workflow automates */
 	task_description?: string;
 }
 
 export interface UpdateWorkflowRequest {
 	name?: string;
-	description?: string;
 	steps?: WorkflowStep[];
 	variables?: WorkflowVariable[];
 	metadata?: WorkflowMetadata;
+	/** Task description - what this workflow automates */
+	task_description?: string;
 }

@@ -150,6 +150,13 @@ impl RunLogger {
     pub fn repository(&self) -> &RunRepository {
         &self.repository
     }
+
+    /// Update run result (final response from agent)
+    pub fn result(&self, run_id: &str, result: &str) {
+        if let Err(e) = self.repository.update_run_result(run_id, result) {
+            tracing::error!("Failed to update run result: {}", e);
+        }
+    }
 }
 
 impl Clone for RunLogger {

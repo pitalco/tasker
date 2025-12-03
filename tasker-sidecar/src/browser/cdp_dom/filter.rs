@@ -27,8 +27,7 @@ pub fn filter_by_paint_order(tree: &mut EnhancedDOMNode, viewport: &DOMRect) {
         }
 
         // Check if this element is significantly covered by higher paint order elements
-        for j in 0..i {
-            let (_, other_bounds, other_paint) = &interactive_elements[j];
+        for (_, other_bounds, other_paint) in interactive_elements.iter().take(i) {
 
             if other_paint > paint_order {
                 let overlap = bounds.intersection_area(other_bounds);
@@ -79,7 +78,7 @@ fn mark_obscured(node: &mut EnhancedDOMNode, obscured: &HashSet<BackendNodeId>) 
 /// Filter out non-visible, non-interactive branches
 pub fn prune_tree(node: &mut EnhancedDOMNode) -> bool {
     // Recursively prune children
-    node.children.retain_mut(|child| prune_tree(child));
+    node.children.retain_mut(prune_tree);
 
     // Keep if:
     // 1. Interactive and visible and not obscured

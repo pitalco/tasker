@@ -34,7 +34,25 @@ impl RunRepository {
         };
 
         repo.init_schema()?;
+        repo.run_migrations()?;
         Ok(repo)
+    }
+
+    /// Run any necessary migrations
+    fn run_migrations(&self) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        // Add result column if it doesn't exist (migration for existing DBs)
+        // SQLite doesn't have IF NOT EXISTS for ALTER TABLE, so we check manually
+        let has_result_column: bool = conn
+            .prepare("SELECT result FROM runs LIMIT 0")
+            .is_ok();
+
+        if !has_result_column {
+            conn.execute("ALTER TABLE runs ADD COLUMN result TEXT", [])?;
+        }
+
+        Ok(())
     }
 
     /// Initialize the database schema
@@ -54,6 +72,7 @@ impl RunRepository {
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
                 error TEXT,
+                result TEXT,
                 metadata TEXT DEFAULT '{}'
             );
 
@@ -106,8 +125,8 @@ impl RunRepository {
         conn.execute(
             r#"
             INSERT INTO runs (id, workflow_id, workflow_name, status, task_description,
-                              custom_instructions, started_at, completed_at, error, metadata)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                              custom_instructions, started_at, completed_at, error, result, metadata)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 run.id,
@@ -119,6 +138,7 @@ impl RunRepository {
                 run.started_at.to_rfc3339(),
                 run.completed_at.map(|dt| dt.to_rfc3339()),
                 run.error,
+                run.result,
                 serde_json::to_string(&run.metadata)?,
             ],
         )?;
@@ -133,7 +153,7 @@ impl RunRepository {
         let mut stmt = conn.prepare(
             r#"
             SELECT id, workflow_id, workflow_name, status, task_description,
-                   custom_instructions, started_at, completed_at, error, metadata
+                   custom_instructions, started_at, completed_at, error, result, metadata
             FROM runs WHERE id = ?1
             "#,
         )?;
@@ -215,7 +235,7 @@ impl RunRepository {
         let select_sql = format!(
             r#"
             SELECT id, workflow_id, workflow_name, status, task_description,
-                   custom_instructions, started_at, completed_at, error, metadata
+                   custom_instructions, started_at, completed_at, error, result, metadata
             FROM runs {}
             ORDER BY started_at {}
             LIMIT ?{} OFFSET ?{}
@@ -449,13 +469,26 @@ impl RunRepository {
                 })
             },
             error: row.get(8)?,
+            result: row.get(9)?,
             metadata: {
-                let json_str: String = row.get(9)?;
+                let json_str: String = row.get(10)?;
                 serde_json::from_str(&json_str).unwrap_or_default()
             },
             steps: Vec::new(),
             logs: Vec::new(),
         })
+    }
+
+    /// Update a run's result
+    pub fn update_run_result(&self, id: &str, result: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        conn.execute(
+            "UPDATE runs SET result = ?1 WHERE id = ?2",
+            params![result, id],
+        )?;
+
+        Ok(())
     }
 }
 

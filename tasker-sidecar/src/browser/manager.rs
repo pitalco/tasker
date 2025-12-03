@@ -105,16 +105,21 @@ impl BrowserManager {
         });
 
         // Small delay for Chrome to fully initialize
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Get the EXISTING default page - don't create a new one!
-        // This is the key fix - Chrome already has one window/tab open
-        let pages = browser.pages().await.map_err(|e| anyhow!("Failed to get pages: {}", e))?;
-
-        let page = pages.into_iter().next()
-            .ok_or_else(|| anyhow!("No default page found"))?;
-
-        tracing::debug!("Using existing default page");
+        // Use existing page if available, otherwise create one
+        let page = match browser.pages().await {
+            Ok(pages) if !pages.is_empty() => {
+                tracing::debug!("Using existing browser page");
+                pages.into_iter().next().unwrap()
+            }
+            _ => {
+                tracing::debug!("Creating new browser page");
+                browser.new_page("about:blank")
+                    .await
+                    .map_err(|e| anyhow!("Failed to create new page: {}", e))?
+            }
+        };
 
         // Set viewport
         let emulation_params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
@@ -240,32 +245,14 @@ impl BrowserManager {
         cdp_dom::extract_dom(page).await
     }
 
-    /// Click element by backend_node_id
+    /// Click element by backend_node_id with fallback strategies
     pub async fn click_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
         let page_guard = self.page.lock().await;
         let page = page_guard
             .as_ref()
             .ok_or_else(|| anyhow!("No page available"))?;
 
-        // Get box model to find click coordinates
-        let box_params = GetBoxModelParams {
-            node_id: None,
-            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
-            object_id: None,
-        };
-
-        let box_result = page.execute(box_params)
-            .await
-            .map_err(|e| anyhow!("Failed to get box model for backend_node_id {}: {}", backend_id, e))?;
-
-        let model = box_result.result.model;
-        let content = model.content.inner();
-
-        // Calculate center point (content quad is [x1,y1, x2,y2, x3,y3, x4,y4])
-        let center_x = (content[0] + content[2] + content[4] + content[6]) / 4.0;
-        let center_y = (content[1] + content[3] + content[5] + content[7]) / 4.0;
-
-        // Scroll element into view first
+        // First, try to scroll element into view
         let scroll_params = ScrollIntoViewIfNeededParams {
             node_id: None,
             backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
@@ -273,55 +260,104 @@ impl BrowserManager {
             rect: None,
         };
         let _ = page.execute(scroll_params).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Small delay for scroll
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Dispatch mouse events
-        let mouse_down = DispatchMouseEventParams {
-            r#type: DispatchMouseEventType::MousePressed,
-            x: center_x,
-            y: center_y,
-            button: Some(MouseButton::Left),
-            click_count: Some(1),
-            modifiers: None,
-            timestamp: None,
-            delta_x: None,
-            delta_y: None,
-            pointer_type: None,
-            buttons: None,
-            tangential_pressure: None,
-            tilt_x: None,
-            tilt_y: None,
-            twist: None,
-            force: None,
+        // Try geometry-based click first (GetBoxModel)
+        let box_params = GetBoxModelParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
         };
 
-        let mouse_up = DispatchMouseEventParams {
-            r#type: DispatchMouseEventType::MouseReleased,
-            x: center_x,
-            y: center_y,
-            button: Some(MouseButton::Left),
-            click_count: Some(1),
-            modifiers: None,
-            timestamp: None,
-            delta_x: None,
-            delta_y: None,
-            pointer_type: None,
-            buttons: None,
-            tangential_pressure: None,
-            tilt_x: None,
-            tilt_y: None,
-            twist: None,
-            force: None,
-        };
+        match page.execute(box_params).await {
+            Ok(box_result) => {
+                let model = box_result.result.model;
+                let content = model.content.inner();
 
-        page.execute(mouse_down).await
-            .map_err(|e| anyhow!("Failed to dispatch mousedown: {}", e))?;
-        page.execute(mouse_up).await
-            .map_err(|e| anyhow!("Failed to dispatch mouseup: {}", e))?;
+                // Calculate center point (content quad is [x1,y1, x2,y2, x3,y3, x4,y4])
+                let center_x = (content[0] + content[2] + content[4] + content[6]) / 4.0;
+                let center_y = (content[1] + content[3] + content[5] + content[7]) / 4.0;
 
-        Ok(())
+                // Dispatch mouse events
+                let mouse_down = DispatchMouseEventParams {
+                    r#type: DispatchMouseEventType::MousePressed,
+                    x: center_x,
+                    y: center_y,
+                    button: Some(MouseButton::Left),
+                    click_count: Some(1),
+                    modifiers: None,
+                    timestamp: None,
+                    delta_x: None,
+                    delta_y: None,
+                    pointer_type: None,
+                    buttons: None,
+                    tangential_pressure: None,
+                    tilt_x: None,
+                    tilt_y: None,
+                    twist: None,
+                    force: None,
+                };
+
+                let mouse_up = DispatchMouseEventParams {
+                    r#type: DispatchMouseEventType::MouseReleased,
+                    x: center_x,
+                    y: center_y,
+                    button: Some(MouseButton::Left),
+                    click_count: Some(1),
+                    modifiers: None,
+                    timestamp: None,
+                    delta_x: None,
+                    delta_y: None,
+                    pointer_type: None,
+                    buttons: None,
+                    tangential_pressure: None,
+                    tilt_x: None,
+                    tilt_y: None,
+                    twist: None,
+                    force: None,
+                };
+
+                page.execute(mouse_down).await
+                    .map_err(|e| anyhow!("Failed to dispatch mousedown: {}", e))?;
+                page.execute(mouse_up).await
+                    .map_err(|e| anyhow!("Failed to dispatch mouseup: {}", e))?;
+
+                Ok(())
+            }
+            Err(box_err) => {
+                // Fallback: Use JavaScript click via Runtime.callFunctionOn
+                tracing::debug!("Box model failed for {}, trying JS click fallback: {}", backend_id, box_err);
+
+                use chromiumoxide::cdp::browser_protocol::dom::ResolveNodeParams;
+                use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
+
+                // Resolve backend_node_id to remote object
+                let resolve_params = ResolveNodeParams {
+                    node_id: None,
+                    backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+                    object_group: Some("click-fallback".to_string()),
+                    execution_context_id: None,
+                };
+
+                let resolve_result = page.execute(resolve_params).await
+                    .map_err(|e| anyhow!("Failed to resolve node {}: {}", backend_id, e))?;
+
+                let object_id = resolve_result.result.object.object_id
+                    .ok_or_else(|| anyhow!("Node {} has no object ID", backend_id))?;
+
+                // Call click() on the element
+                let call_params = CallFunctionOnParams::builder()
+                    .object_id(object_id)
+                    .function_declaration("function() { this.scrollIntoView({block: 'center'}); this.click(); }")
+                    .build()
+                    .map_err(|e| anyhow!("Failed to build call params: {}", e))?;
+
+                page.execute(call_params).await
+                    .map_err(|e| anyhow!("JS click fallback failed for {}: {}", backend_id, e))?;
+
+                Ok(())
+            }
+        }
     }
 
     /// Focus element by backend_node_id
@@ -367,6 +403,108 @@ impl BrowserManager {
             .map_err(|e| anyhow!("Failed to type text: {}", e))?;
 
         Ok(())
+    }
+
+    /// Scroll element into view by backend_node_id
+    pub async fn scroll_to_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        let params = ScrollIntoViewIfNeededParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+            rect: None,
+        };
+
+        page.execute(params).await
+            .map_err(|e| anyhow!("Failed to scroll element into view: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Select dropdown option by backend_node_id
+    /// Uses CDP to resolve the node and execute selection script
+    pub async fn select_option_by_backend_id(&self, backend_id: BackendNodeId, option: &str) -> Result<()> {
+        // First scroll into view
+        self.scroll_to_backend_id(backend_id).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        // Resolve backend_node_id to remote object
+        use chromiumoxide::cdp::browser_protocol::dom::ResolveNodeParams;
+        let resolve_params = ResolveNodeParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_group: Some("dropdown-select".to_string()),
+            execution_context_id: None,
+        };
+
+        let resolve_result = page.execute(resolve_params).await
+            .map_err(|e| anyhow!("Failed to resolve node: {}", e))?;
+
+        let object_id = resolve_result.result.object.object_id
+            .ok_or_else(|| anyhow!("Node has no object ID"))?;
+
+        // Call function on the resolved object to select the option
+        use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
+        let escaped_option = option.replace('\\', "\\\\").replace('\'', "\\'");
+        let function = format!(
+            r#"function() {{
+                const optionValue = '{}';
+                if (this.tagName !== 'SELECT') {{
+                    return {{ success: false, error: 'Element is not a SELECT' }};
+                }}
+                for (const opt of this.options) {{
+                    if (opt.value === optionValue || opt.text === optionValue ||
+                        opt.value.toLowerCase() === optionValue.toLowerCase() ||
+                        opt.text.toLowerCase() === optionValue.toLowerCase()) {{
+                        this.value = opt.value;
+                        this.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        this.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        return {{ success: true, selected: opt.text }};
+                    }}
+                }}
+                const available = Array.from(this.options).map(o => o.text).join(', ');
+                return {{ success: false, error: 'Option not found', available: available }};
+            }}"#,
+            escaped_option
+        );
+
+        let call_params = CallFunctionOnParams::builder()
+            .object_id(object_id)
+            .function_declaration(function)
+            .return_by_value(true)  // Important: get actual value, not object reference
+            .build()
+            .map_err(|e| anyhow!("Failed to build call params: {}", e))?;
+
+        let call_result = page.execute(call_params).await
+            .map_err(|e| anyhow!("Failed to execute selection: {}", e))?;
+
+        // Parse result
+        if let Some(result) = call_result.result.result.value {
+            if let Some(obj) = result.as_object() {
+                if obj.get("success").and_then(|v| v.as_bool()) == Some(true) {
+                    return Ok(());
+                } else {
+                    let error = obj.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+                    let available = obj.get("available").and_then(|v| v.as_str()).unwrap_or("");
+                    return Err(anyhow!("{}: {}. Available options: {}", error, option, available));
+                }
+            }
+            // If result is not an object, log it for debugging
+            tracing::warn!("Unexpected select result type: {:?}", result);
+        } else {
+            tracing::warn!("Select returned no value, result: {:?}", call_result.result.result);
+        }
+
+        Err(anyhow!("Failed to select option '{}' - no valid response from page", option))
     }
 
     /// Get element info by backend_node_id
