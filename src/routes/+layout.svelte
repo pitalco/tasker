@@ -5,6 +5,8 @@
 	import { createRunsState } from '$lib/stores/runs.svelte';
 	import { startSidecar, isSidecarRunning } from '$lib/services/sidecarService';
 	import { page } from '$app/stores';
+	import taskerIcon from '$lib/assets/tasker-icon.png';
+	import taskerLogoFull from '$lib/assets/tasker-logo-full.png';
 
 	let { children } = $props();
 
@@ -87,18 +89,8 @@
 		<div class="text-center">
 			<!-- Animated Logo -->
 			<div class="relative mb-8">
-				<div class="w-32 h-32 mx-auto bg-brutal-yellow border-4 border-black relative overflow-hidden" style="box-shadow: 8px 8px 0 0 #000;">
-					<!-- Bouncing T -->
-					<div class="absolute inset-0 flex items-center justify-center animate-bounce">
-						<span class="text-6xl font-black text-black">T</span>
-					</div>
-					<!-- Spinning gear behind -->
-					<div class="absolute -bottom-4 -right-4 w-16 h-16 animate-spin-slow">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-black/20">
-							<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-							<circle cx="12" cy="12" r="3" />
-						</svg>
-					</div>
+				<div class="w-32 h-32 mx-auto relative">
+					<img src={taskerIcon} alt="Tasker" class="w-full h-full object-contain animate-bounce" />
 				</div>
 				<!-- Decorative dots -->
 				<div class="absolute -top-2 -left-2 w-4 h-4 bg-brutal-magenta border-2 border-black animate-ping"></div>
@@ -144,16 +136,8 @@
 	<!-- Sidebar (fixed) -->
 	<aside class="fixed top-0 left-0 w-56 h-screen bg-brutal-yellow border-r-4 border-black flex flex-col z-40">
 		<!-- Logo -->
-		<div class="p-6 border-b-4 border-black">
-			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 bg-black flex items-center justify-center">
-					<span class="text-brutal-yellow font-bold text-xl">T</span>
-				</div>
-				<div>
-					<h1 class="text-2xl font-bold text-black tracking-tight">TASKER</h1>
-					<p class="text-xs font-bold text-black/60 uppercase tracking-widest">Automation</p>
-				</div>
-			</div>
+		<div class="px-3 py-4 border-b-4 border-black">
+			<img src={taskerLogoFull} alt="Tasker" class="w-full h-10 object-contain" />
 		</div>
 
 		<!-- Navigation -->
