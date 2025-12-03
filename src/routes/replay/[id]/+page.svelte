@@ -444,10 +444,12 @@
 			<div>
 				<div class="flex justify-between mb-2">
 					<span class="font-bold text-black">Progress</span>
-					<span class="font-bold text-black">{currentStep} / {totalSteps}</span>
 				</div>
-				<div class="h-6 border-3 border-black bg-white" style="box-shadow: 2px 2px 0 0 #000;">
-					<div class="h-full bg-brutal-lime transition-all duration-300" style="width: {progress}%"></div>
+				<div class="h-6 border-3 border-black bg-white relative overflow-hidden" style="box-shadow: 2px 2px 0 0 #000;">
+					<!-- Animated fill bar -->
+					<div class="absolute inset-0 bg-brutal-lime animate-progress-pulse"></div>
+					<!-- Moving stripes overlay -->
+					<div class="absolute inset-0 opacity-30 animate-progress-stripes" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, #000 10px, #000 12px);"></div>
 				</div>
 			</div>
 

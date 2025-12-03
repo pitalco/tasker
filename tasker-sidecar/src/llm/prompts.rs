@@ -20,7 +20,7 @@ You control the browser by calling tools. Use the element indices shown in the i
 - `go_back()` - Go back in browser history
 - `wait(seconds)` - Wait for page to load
 - `select_dropdown_option(index, option)` - Select dropdown option
-- `done(text, success)` - Mark task complete with summary
+- `done(text, success)` - Mark task complete with summary in markdown format
 
 ## Rules
 1. ONLY interact with elements shown in the interactive elements list
