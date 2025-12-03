@@ -4,15 +4,19 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart};
 use genai::Client;
-use serde::Deserialize;
 
+use crate::config;
 use crate::models::WorkflowStep;
 
 /// Default model for AI enhancement (vision-capable)
 const DEFAULT_ENHANCEMENT_MODEL: &str = "gemini-2.5-flash";
 
-/// Maximum steps to process in a single API batch
-const BATCH_SIZE: usize = 5;
+/// Result of task description generation
+#[derive(Debug)]
+pub struct TaskDescriptionResult {
+    pub name: String,
+    pub description: String,
+}
 
 /// AI enhancement service for recorded workflows
 pub struct AIEnhancer {
@@ -20,66 +24,74 @@ pub struct AIEnhancer {
     model: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct StepDescription {
-    step: usize,
-    description: String,
-}
-
 impl AIEnhancer {
     pub fn new(model: Option<&str>) -> Self {
+        let model_name = model.unwrap_or(DEFAULT_ENHANCEMENT_MODEL);
+
+        // Determine provider from model name and load API key from app settings
+        let provider = if model_name.starts_with("gemini") {
+            "gemini"
+        } else if model_name.starts_with("gpt") {
+            "openai"
+        } else if model_name.starts_with("claude") {
+            "anthropic"
+        } else {
+            "gemini" // Default to gemini
+        };
+
+        // Load API key from app settings database
+        if let Some(api_key) = config::get_api_key(provider) {
+            let env_var = match provider {
+                "anthropic" => "ANTHROPIC_API_KEY",
+                "openai" => "OPENAI_API_KEY",
+                _ => "GEMINI_API_KEY",
+            };
+            std::env::set_var(env_var, api_key);
+            tracing::debug!("Loaded {} API key from app settings", provider);
+        }
+
         Self {
             client: Client::default(),
-            model: model.unwrap_or(DEFAULT_ENHANCEMENT_MODEL).to_string(),
+            model: model_name.to_string(),
         }
     }
 
-    /// Enhance all steps with AI-generated descriptions
-    /// Processes in batches to avoid token limits
-    pub async fn enhance_steps(&self, steps: &mut [WorkflowStep]) -> Result<()> {
+    /// Generate a comprehensive task description from all recorded steps
+    ///
+    /// Analyzes all screenshots and actions to produce a detailed description
+    /// that an AI agent can use to replicate the workflow.
+    /// Returns both a short name and the full task description.
+    pub async fn generate_task_description(&self, steps: &[WorkflowStep], start_url: &str) -> Result<TaskDescriptionResult> {
         if steps.is_empty() {
-            return Ok(());
+            return Ok(TaskDescriptionResult {
+                name: "Empty Recording".to_string(),
+                description: "No actions were recorded.".to_string(),
+            });
         }
 
-        let total_batches = steps.len().div_ceil(BATCH_SIZE);
+        tracing::info!("Generating task description from {} steps", steps.len());
 
-        for (batch_idx, chunk) in steps.chunks_mut(BATCH_SIZE).enumerate() {
-            tracing::info!(
-                "Processing AI enhancement batch {}/{} ({} steps)",
-                batch_idx + 1,
-                total_batches,
-                chunk.len()
-            );
+        let mut parts = vec![ContentPart::from_text(TASK_DESCRIPTION_PROMPT.to_string())];
 
-            if let Err(e) = self.enhance_batch(chunk, batch_idx * BATCH_SIZE).await {
-                tracing::warn!("Batch {} enhancement failed: {}", batch_idx + 1, e);
-                // Continue with other batches even if one fails
-            }
-
-            // Small delay between batches to avoid rate limiting
-            if batch_idx < total_batches - 1 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn enhance_batch(&self, steps: &mut [WorkflowStep], offset: usize) -> Result<()> {
-        let mut parts = vec![ContentPart::from_text(ENHANCEMENT_PROMPT.to_string())];
+        // Add start URL context
+        parts.push(ContentPart::from_text(format!(
+            "\n\n=== RECORDING SESSION ===\nStart URL: {}\nTotal Steps: {}\n",
+            start_url,
+            steps.len()
+        )));
 
         // Build context for each step with screenshots
         for (i, step) in steps.iter().enumerate() {
-            let step_num = offset + i + 1;
+            let step_num = i + 1;
 
             // Add step context as text
             let step_context = format!(
-                "\n\n--- Step {} ---\nAction: {:?}\nSelector: {:?}\nValue: {:?}\nAuto-generated name: {}",
+                "\n\n--- Step {} of {} ---\nAction: {:?}\nSelector: {:?}\nValue: {:?}",
                 step_num,
+                steps.len(),
                 step.action.action_type,
-                step.action.selector.as_ref().map(|s| &s.value),
-                step.action.value,
-                step.name
+                step.action.selector.as_ref().map(|s| format!("{:?}: {}", s.strategy, s.value)),
+                step.action.value
             );
             parts.push(ContentPart::from_text(step_context));
 
@@ -116,133 +128,111 @@ impl AIEnhancer {
             .client
             .exec_chat(&self.model, request, None)
             .await
-            .map_err(|e| anyhow!("AI enhancement request failed: {}", e))?;
+            .map_err(|e| anyhow!("AI task description generation failed: {}", e))?;
 
-        // Parse response and apply descriptions
-        if let Some(text) = response.first_text() {
-            self.parse_and_apply_descriptions(text, steps, offset)?;
-        }
+        // Extract the response text
+        let response_text = response
+            .first_text()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Failed to generate task description.".to_string());
 
-        Ok(())
+        // Parse name and description from response
+        let result = Self::parse_response(&response_text);
+
+        tracing::info!("Generated task: '{}' ({} chars)", result.name, result.description.len());
+
+        Ok(result)
     }
 
-    fn parse_and_apply_descriptions(
-        &self,
-        response: &str,
-        steps: &mut [WorkflowStep],
-        offset: usize,
-    ) -> Result<()> {
-        // Try to extract JSON array from response
-        let json_str = extract_json_array(response)
-            .ok_or_else(|| anyhow!("No valid JSON array found in AI response"))?;
+    /// Parse the AI response to extract name and description
+    fn parse_response(response: &str) -> TaskDescriptionResult {
+        let mut name = String::new();
+        let mut description = String::new();
+        let mut in_description = false;
 
-        let descriptions: Vec<StepDescription> = serde_json::from_str(json_str)
-            .map_err(|e| anyhow!("Failed to parse AI response JSON: {}", e))?;
+        for line in response.lines() {
+            let trimmed = line.trim();
 
-        // Apply descriptions to steps
-        for desc in descriptions {
-            let local_idx = desc.step.saturating_sub(offset + 1);
-            if local_idx < steps.len() {
-                steps[local_idx].description = Some(desc.description.clone());
-                tracing::debug!("Applied AI description to step {}: {}", desc.step, desc.description);
+            if trimmed.starts_with("<name>") && trimmed.ends_with("</name>") {
+                // Single line: <name>Login to Dashboard</name>
+                name = trimmed
+                    .trim_start_matches("<name>")
+                    .trim_end_matches("</name>")
+                    .trim()
+                    .to_string();
+            } else if trimmed.starts_with("<name>") {
+                // Multi-line start
+                name = trimmed.trim_start_matches("<name>").trim().to_string();
+            } else if trimmed.ends_with("</name>") {
+                // Multi-line end
+                if !name.is_empty() {
+                    name.push(' ');
+                }
+                name.push_str(trimmed.trim_end_matches("</name>").trim());
+            } else if trimmed == "<description>" {
+                in_description = true;
+            } else if trimmed == "</description>" {
+                in_description = false;
+            } else if in_description {
+                if !description.is_empty() {
+                    description.push('\n');
+                }
+                description.push_str(line);
             }
         }
 
-        Ok(())
+        // Fallback if parsing fails
+        if name.is_empty() {
+            name = "Recorded Workflow".to_string();
+        }
+        if description.is_empty() {
+            description = response.to_string();
+        }
+
+        TaskDescriptionResult { name, description }
     }
 }
 
-/// Extract JSON array from response text (handles markdown code blocks)
-fn extract_json_array(text: &str) -> Option<&str> {
-    // Try to find JSON in markdown code block
-    if let Some(start) = text.find("```json") {
-        let content_start = start + 7;
-        if let Some(end) = text[content_start..].find("```") {
-            return Some(text[content_start..content_start + end].trim());
-        }
-    }
+const TASK_DESCRIPTION_PROMPT: &str = r#"You are analyzing a recorded browser automation session. Generate a name and detailed task description that an AI agent could use to replicate this workflow.
 
-    // Try plain ``` code block
-    if let Some(start) = text.find("```") {
-        let content_start = start + 3;
-        // Skip optional language identifier on same line
-        let content_start = text[content_start..]
-            .find('\n')
-            .map(|n| content_start + n + 1)
-            .unwrap_or(content_start);
-        if let Some(end) = text[content_start..].find("```") {
-            return Some(text[content_start..content_start + end].trim());
-        }
-    }
+You will see:
+1. The starting URL
+2. Each action with its type, selector, and value
+3. BEFORE and AFTER screenshots for each step
 
-    // Try to find raw JSON array
-    if let Some(start) = text.find('[') {
-        if let Some(end) = text.rfind(']') {
-            if end > start {
-                return Some(&text[start..=end]);
-            }
-        }
-    }
+Your response MUST use this exact format:
 
-    None
-}
+<name>Short descriptive name (3-6 words)</name>
+<description>
+Navigate to [URL]
 
-const ENHANCEMENT_PROMPT: &str = r#"You are analyzing browser automation recording screenshots to generate human-readable descriptions.
+1. First action with specific details
+2. Second action with specific details
+...
+</description>
 
-For each step, you'll see:
-1. The action type and technical details (selector, value)
-2. A BEFORE screenshot (page state before the action)
-3. An AFTER screenshot (page state after the action)
+Guidelines for the name:
+- Keep it short (3-6 words)
+- Describe the main goal (e.g., "Login to Dashboard", "Submit Contact Form", "Search for Product")
 
-Your task: Generate clear, human-readable descriptions that help someone understand what each action does visually.
+Guidelines for the description:
+- Start with the URL to navigate to
+- Describe each action in clear, step-by-step detail
+- Use specific visual identifiers (button text, input labels, colors, positions)
+- Include any text that was typed or options that were selected
+- Be detailed enough for an AI agent to replicate without seeing the screenshots
 
-Guidelines:
-- Describe the visual element being interacted with (color, position, text on it)
-- Use natural language: "Click the blue 'Sign In' button in the top-right corner"
-- Mention form field labels, button text, or other identifying features
-- Keep descriptions concise but specific (50-100 characters)
-- Focus on visual appearance, not CSS selectors
+Example response:
 
-Respond ONLY with a JSON array of descriptions:
-```json
-[
-  {"step": 1, "description": "Click the blue 'Sign In' button in the header"},
-  {"step": 2, "description": "Type email address into the 'Email' input field"}
-]
-```
+<name>Login to Admin Dashboard</name>
+<description>
+Navigate to https://example.com/admin
 
-Important: Use the exact step numbers provided. Return valid JSON only."#;
+1. Click the "Sign In" button in the top-right corner of the navigation bar
+2. In the email input field (labeled "Email Address"), type the email address
+3. In the password field below the email field, type the password
+4. Click the blue "Log In" button below the password field
+5. Wait for the dashboard to load
+</description>
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_json_array_markdown() {
-        let text = r#"Here is the response:
-```json
-[{"step": 1, "description": "Click button"}]
-```"#;
-        let result = extract_json_array(text);
-        assert!(result.is_some());
-        assert!(result.unwrap().starts_with('['));
-    }
-
-    #[test]
-    fn test_extract_json_array_raw() {
-        let text = r#"[{"step": 1, "description": "Click button"}]"#;
-        let result = extract_json_array(text);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), text);
-    }
-
-    #[test]
-    fn test_extract_json_array_with_text() {
-        let text = r#"Based on the screenshots, here are the descriptions:
-[{"step": 1, "description": "Click the login button"}]
-That's all!"#;
-        let result = extract_json_array(text);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("login button"));
-    }
-}
+Generate the name and description now:"#;

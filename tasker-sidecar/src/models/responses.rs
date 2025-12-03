@@ -1,8 +1,6 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
-use super::workflow::Workflow;
-
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: String,
@@ -22,7 +20,8 @@ pub struct StartRecordingResponse {
 
 #[derive(Debug, Serialize)]
 pub struct StopRecordingResponse {
-    pub workflow: Workflow,
+    pub name: String,
+    pub task_description: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -17,6 +17,7 @@
 
 	let isRecording = $state(false);
 	let isPaused = $state(false);
+	let isSaving = $state(false);
 	let steps = $state<WorkflowStep[]>([]);
 	let error = $state<string | null>(null);
 	let sessionId = $state<string | null>(null);
@@ -111,18 +112,21 @@
 			return;
 		}
 
+		isSaving = true;
+
 		try {
-			// Stop recording and get workflow from sidecar
+			// Stop recording and generate task description via AI
 			const response = await stopRecording(sessionId);
 
 			// Disconnect WebSocket
 			ws?.disconnect();
 			ws = null;
 
-			// Save workflow to store
+			// Save workflow with AI-generated name and task description
 			const workflow = await workflowState.createWorkflow({
-				name: response.workflow.name || `Recording ${new Date().toLocaleString()}`,
-				steps: response.workflow.steps || steps,
+				name: response.name,
+				task_description: response.task_description,
+				steps: [], // No steps - AI agent will execute from task description
 				metadata: {
 					recording_source: 'recorded'
 				}
@@ -131,6 +135,7 @@
 			// Reset state
 			isRecording = false;
 			isPaused = false;
+			isSaving = false;
 			steps = [];
 			sessionId = null;
 
@@ -141,6 +146,7 @@
 				goto('/');
 			}
 		} catch (e) {
+			isSaving = false;
 			error = e instanceof Error ? e.message : 'Failed to save workflow';
 		}
 	}
@@ -231,15 +237,30 @@
 				</div>
 
 				<div class="actions">
-					<button onclick={handlePauseResume} class="btn secondary">
+					<button onclick={handlePauseResume} class="btn secondary" disabled={isSaving}>
 						{isPaused ? 'RESUME' : 'PAUSE'}
 					</button>
-					<button onclick={handleCancel} class="btn secondary">CANCEL</button>
-					<button onclick={handleStopRecording} class="btn primary">
-						STOP & SAVE
+					<button onclick={handleCancel} class="btn secondary" disabled={isSaving}>CANCEL</button>
+					<button onclick={handleStopRecording} class="btn primary" disabled={isSaving}>
+						{#if isSaving}
+							<span class="spinner-small"></span>
+							GENERATING...
+						{:else}
+							STOP & SAVE
+						{/if}
 					</button>
 				</div>
 			</div>
+
+			{#if isSaving}
+				<div class="saving-overlay">
+					<div class="saving-content">
+						<span class="spinner-large"></span>
+						<h2>Generating Task Description</h2>
+						<p>AI is analyzing your recording to create a detailed task description...</p>
+					</div>
+				</div>
+			{/if}
 
 			<div class="recording-content">
 				<div class="status-message">
@@ -408,8 +429,60 @@
 		}
 	}
 
+	.spinner-small {
+		width: 16px;
+		height: 16px;
+		border: 2px solid rgba(0, 0, 0, 0.3);
+		border-top-color: #000;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	.spinner-large {
+		width: 48px;
+		height: 48px;
+		border: 4px solid rgba(255, 255, 255, 0.3);
+		border-top-color: var(--brutal-lime, #c4ff4d);
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	/* Saving Overlay */
+	.saving-overlay {
+		position: absolute;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.9);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 100;
+	}
+
+	.saving-content {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 16px;
+		text-align: center;
+		padding: 32px;
+	}
+
+	.saving-content h2 {
+		margin: 0;
+		color: white;
+		font-size: 1.5rem;
+	}
+
+	.saving-content p {
+		margin: 0;
+		color: #888;
+		font-size: 0.875rem;
+		max-width: 300px;
+	}
+
 	/* Recording Screen */
 	.recording-screen {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		height: 100%;

@@ -127,8 +127,8 @@ pub async fn start_recording(
     }))
 }
 
-/// Stop a recording session and return the workflow
-/// AI enhancement is automatically applied to generate human-readable step descriptions
+/// Stop a recording session and generate a task description
+/// AI analyzes all screenshots and actions to generate a comprehensive description
 pub async fn stop_recording(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -138,29 +138,42 @@ pub async fn stop_recording(
         .remove(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "Recording session not found".to_string()))?;
 
+    // Get the start URL before stopping
+    let start_url = active.session.start_url.clone();
+
     // Stop recording and get workflow
-    let mut workflow = active.recorder.stop().await.map_err(|e| {
+    let workflow = active.recorder.stop().await.map_err(|e| {
         tracing::error!("Failed to stop recording: {}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    tracing::info!("Stopped recording session {}, enhancing {} steps with AI", session_id, workflow.steps.len());
+    tracing::info!(
+        "Stopped recording session {}, generating task description from {} steps",
+        session_id,
+        workflow.steps.len()
+    );
 
-    // Enhance steps with AI-generated descriptions
-    if !workflow.steps.is_empty() {
+    // Generate comprehensive task description from all steps
+    let (name, task_description) = if !workflow.steps.is_empty() {
         let enhancer = AIEnhancer::new(None); // Use default model
-        match enhancer.enhance_steps(&mut workflow.steps).await {
-            Ok(_) => {
-                tracing::info!("AI enhancement completed for session {}", session_id);
+        match enhancer.generate_task_description(&workflow.steps, &start_url).await {
+            Ok(result) => {
+                tracing::info!("Task generated for session {}: '{}'", session_id, result.name);
+                (result.name, result.description)
             }
             Err(e) => {
-                // Log warning but continue - workflow is still valid without AI descriptions
-                tracing::warn!("AI enhancement failed for session {}: {}", session_id, e);
+                tracing::warn!("Task description generation failed for session {}: {}", session_id, e);
+                (
+                    "Recorded Workflow".to_string(),
+                    format!("Failed to generate task description: {}", e),
+                )
             }
         }
-    }
+    } else {
+        ("Empty Recording".to_string(), "No actions were recorded.".to_string())
+    };
 
-    Ok(Json(StopRecordingResponse { workflow }))
+    Ok(Json(StopRecordingResponse { name, task_description }))
 }
 
 /// Cancel a recording session without saving
