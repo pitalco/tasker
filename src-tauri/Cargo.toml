@@ -41,3 +41,6 @@ tokio-tungstenite = "0.24"
 # YAML parsing for Taskfile
 serde_yaml = "0.9"
 regex-lite = "0.1"
+
+# File dialog
+tauri-plugin-dialog = "2"

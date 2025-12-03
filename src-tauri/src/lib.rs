@@ -10,6 +10,7 @@ use tauri::RunEvent;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Initialize logging - always output to stdout in dev mode
             app.handle().plugin(
@@ -62,6 +63,7 @@ pub fn run() {
             commands::taskfile::import_taskfile,
             commands::taskfile::export_taskfile,
             commands::taskfile::suggest_taskfile_filename,
+            commands::taskfile::save_taskfile,
             // Webview commands (embedded browser)
             commands::webview::get_window_position,
             commands::webview::create_browser_tab,

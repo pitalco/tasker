@@ -3,6 +3,8 @@ use crate::taskfile::{
     self, Taskfile, ValidationResult,
 };
 use serde::{Deserialize, Serialize};
+use tauri_plugin_dialog::DialogExt;
+use std::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportResult {
@@ -102,4 +104,35 @@ pub async fn suggest_taskfile_filename(workflow_id: String) -> Result<String, St
     let workflow: db::WorkflowDto = workflow.into();
     let taskfile = taskfile::workflow_to_taskfile(&workflow);
     Ok(taskfile::suggest_filename(&taskfile))
+}
+
+/// Save a workflow as a Taskfile using a file save dialog
+#[tauri::command]
+pub async fn save_taskfile(app: tauri::AppHandle, workflow_id: String) -> Result<bool, String> {
+    // Get workflow from database
+    let workflow = db::get_workflow_by_id(&workflow_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Workflow not found".to_string())?;
+
+    // Convert to Taskfile
+    let workflow_dto: db::WorkflowDto = workflow.into();
+    let taskfile_data = taskfile::workflow_to_taskfile(&workflow_dto);
+    let yaml = taskfile::to_yaml_pretty(&taskfile_data)?;
+    let filename = taskfile::suggest_filename(&taskfile_data);
+
+    // Show save dialog
+    let file_path = app.dialog()
+        .file()
+        .set_file_name(&filename)
+        .add_filter("Taskfile", &["yaml", "taskfile.yaml"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(path) => {
+            fs::write(path.as_path().unwrap(), yaml).map_err(|e| format!("Failed to write file: {}", e))?;
+            Ok(true)
+        }
+        None => Ok(false), // User cancelled
+    }
 }

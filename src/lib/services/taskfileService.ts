@@ -42,23 +42,10 @@ export async function suggestTaskfileFilename(workflowId: string): Promise<strin
 }
 
 /**
- * Download a taskfile as a .yaml file
+ * Save a taskfile using native file dialog
  */
-export async function downloadTaskfile(workflowId: string): Promise<void> {
-	const result = await exportTaskfile(workflowId);
-
-	// Create blob and download
-	const blob = new Blob([result.yaml], { type: 'application/x-yaml' });
-	const url = URL.createObjectURL(blob);
-
-	const link = document.createElement('a');
-	link.href = url;
-	link.download = result.filename;
-	document.body.appendChild(link);
-	link.click();
-	document.body.removeChild(link);
-
-	URL.revokeObjectURL(url);
+export async function downloadTaskfile(workflowId: string): Promise<boolean> {
+	return invoke<boolean>('save_taskfile', { workflowId });
 }
 
 /**
