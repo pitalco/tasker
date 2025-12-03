@@ -172,9 +172,6 @@ impl RunExecutor {
                     params.clone(),
                 );
 
-                // Log step start
-                self.logger.step(&step);
-
                 let start = std::time::Instant::now();
 
                 // Execute the tool

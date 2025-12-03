@@ -103,7 +103,7 @@ impl Tool for GoBackTool {
     }
 
     async fn execute(&self, _params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        ctx.browser.evaluate("window.history.back()").await?;
+        ctx.browser.evaluate("window.history.back(); true").await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         let current_url = ctx.browser.current_url().await.unwrap_or_default();
