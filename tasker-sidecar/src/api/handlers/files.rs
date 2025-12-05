@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::runs::{FileListResponse, RunFileContent, RunFileMetadata};
+use crate::runs::{FileListResponse, RunFileContent};
 
 use super::super::state::AppState;
 
@@ -49,7 +49,7 @@ pub async fn list_files(
 pub async fn list_files_for_run(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<String>,
-) -> Result<Json<Vec<RunFileMetadata>>, (StatusCode, String)> {
+) -> Result<Json<FileListResponse>, (StatusCode, String)> {
     let repo = state.runs_repository.as_ref().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -62,7 +62,8 @@ pub async fn list_files_for_run(
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    Ok(Json(files))
+    let total = files.len() as i64;
+    Ok(Json(FileListResponse { files, total }))
 }
 
 /// Get file content by ID (returns base64 encoded content for API transport)

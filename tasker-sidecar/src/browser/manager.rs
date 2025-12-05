@@ -68,26 +68,49 @@ impl BrowserManager {
             height: 720,
         });
 
+        // Use disable_default_args() to prevent chromiumoxide from adding --enable-automation
+        // which causes the yellow "Chrome is being controlled" banner
         let mut config = BrowserConfig::builder()
-            .window_size(viewport.width as u32, viewport.height as u32);
+            .disable_default_args();
 
-        if !headless {
-            config = config.with_head();
+        if headless {
+            // For headless mode, set a fixed viewport size
+            config = config.window_size(viewport.width as u32, viewport.height as u32);
+        } else {
+            // For headed mode, start maximized and let Chrome determine viewport
+            config = config
+                .with_head()
+                .arg("--start-maximized");
         }
 
-        // Clean launch flags - no extra windows, no extensions
-        // Note: --disable-infobars is deprecated but kept for older Chrome versions
-        // --enable-automation is the switch that causes the yellow banner, so we exclude it
+        // Manually add chromiumoxide's DEFAULT_ARGS, EXCEPT --enable-automation
+        // This removes the automation banner while keeping other useful defaults
         config = config
-            .arg("--disable-blink-features=AutomationControlled")
-            .arg("--disable-infobars")
-            .arg("--enable-automation=false")
-            .arg("--no-first-run")
-            .arg("--no-default-browser-check")
+            .arg("--disable-background-networking")
+            .arg("--enable-features=NetworkService,NetworkServiceInProcess")
+            .arg("--disable-background-timer-throttling")
+            .arg("--disable-backgrounding-occluded-windows")
+            .arg("--disable-breakpad")
+            .arg("--disable-client-side-phishing-detection")
+            .arg("--disable-component-extensions-with-background-pages")
             .arg("--disable-default-apps")
-            .arg("--disable-extensions")
+            .arg("--disable-dev-shm-usage")
+            .arg("--disable-features=TranslateUI")
+            .arg("--disable-hang-monitor")
+            .arg("--disable-ipc-flooding-protection")
             .arg("--disable-popup-blocking")
-            .arg("--disable-background-networking");
+            .arg("--disable-prompt-on-repost")
+            .arg("--disable-renderer-backgrounding")
+            .arg("--disable-sync")
+            .arg("--force-color-profile=srgb")
+            .arg("--metrics-recording-only")
+            .arg("--no-first-run")
+            .arg("--password-store=basic")
+            .arg("--use-mock-keychain")
+            .arg("--lang=en_US")
+            .arg("--disable-infobars")
+            .arg("--no-default-browser-check")
+            .arg("--disable-extensions");
 
         let config = config.build().map_err(|e| anyhow!("Failed to build browser config: {}", e))?;
 
