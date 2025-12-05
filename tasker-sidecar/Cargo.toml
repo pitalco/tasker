@@ -44,5 +44,8 @@ urlencoding = "2.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5.0"
 
+# MIME type detection for file storage
+mime_guess = "2.0"
+
 [dev-dependencies]
 tokio-test = "0.4"

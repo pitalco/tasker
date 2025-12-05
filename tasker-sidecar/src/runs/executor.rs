@@ -103,11 +103,13 @@ impl RunExecutor {
         // Create selector map storage (will be updated before each LLM call)
         let selector_map = Arc::new(RwLock::new(SelectorMap::new()));
 
-        // Create tool context
+        // Create tool context with file repository access
         let ctx = ToolContext {
             run_id: run_id.clone(),
+            workflow_id: run.workflow_id.clone(),
             browser: Arc::clone(&self.browser),
             selector_map: Arc::clone(&selector_map),
+            file_repository: Some(Arc::new(self.logger.repository().clone())),
         };
 
         // Set up API key if provided

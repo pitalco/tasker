@@ -3,6 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use super::file_models::{RunFile, RunFileMetadata, MAX_FILE_SIZE};
 use super::models::{Run, RunListQuery, RunLog, RunStatus, RunStep};
 
 /// Database path for runs (uses same Tauri data directory)
@@ -112,6 +113,25 @@ impl RunRepository {
 
             CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
             CREATE INDEX IF NOT EXISTS idx_run_logs_timestamp ON run_logs(timestamp);
+
+            -- Run files table (for storing files created by agent tools)
+            CREATE TABLE IF NOT EXISTS run_files (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                workflow_id TEXT,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                file_size INTEGER NOT NULL,
+                content BLOB NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_run_files_run_id ON run_files(run_id);
+            CREATE INDEX IF NOT EXISTS idx_run_files_workflow_id ON run_files(workflow_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_run_files_path ON run_files(run_id, file_path);
             "#,
         )?;
 
@@ -490,6 +510,212 @@ impl RunRepository {
 
         Ok(())
     }
+
+    // ==================== File Operations ====================
+
+    /// Create or update a file (upsert by run_id + file_path)
+    pub fn upsert_file(&self, file: &RunFile) -> Result<()> {
+        if file.file_size > MAX_FILE_SIZE {
+            return Err(anyhow!(
+                "File size {} bytes exceeds maximum allowed size of {} bytes (50 MB)",
+                file.file_size,
+                MAX_FILE_SIZE
+            ));
+        }
+
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        conn.execute(
+            r#"
+            INSERT INTO run_files (id, run_id, workflow_id, file_name, file_path,
+                                   mime_type, file_size, content, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(run_id, file_path) DO UPDATE SET
+                file_name = excluded.file_name,
+                mime_type = excluded.mime_type,
+                file_size = excluded.file_size,
+                content = excluded.content,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                file.id,
+                file.run_id,
+                file.workflow_id,
+                file.file_name,
+                file.file_path,
+                file.mime_type,
+                file.file_size,
+                file.content,
+                file.created_at.to_rfc3339(),
+                file.updated_at.to_rfc3339(),
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get a file by run_id and file_path (for tool read operations)
+    pub fn get_file_by_path(&self, run_id: &str, file_path: &str) -> Result<Option<RunFile>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, run_id, workflow_id, file_name, file_path,
+                   mime_type, file_size, content, created_at, updated_at
+            FROM run_files
+            WHERE run_id = ?1 AND file_path = ?2
+            "#,
+        )?;
+
+        let file = stmt
+            .query_row(params![run_id, file_path], |row| Ok(self.row_to_file(row)))
+            .optional()?;
+
+        match file {
+            Some(Ok(f)) => Ok(Some(f)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a file by ID (with content)
+    pub fn get_file(&self, id: &str) -> Result<Option<RunFile>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, run_id, workflow_id, file_name, file_path,
+                   mime_type, file_size, content, created_at, updated_at
+            FROM run_files WHERE id = ?1
+            "#,
+        )?;
+
+        let file = stmt
+            .query_row(params![id], |row| Ok(self.row_to_file(row)))
+            .optional()?;
+
+        match file {
+            Some(Ok(f)) => Ok(Some(f)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    /// List files for a run (metadata only, no content)
+    pub fn list_files_for_run(&self, run_id: &str) -> Result<Vec<RunFileMetadata>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT rf.id, rf.run_id, rf.workflow_id, rf.file_name, rf.file_path,
+                   rf.mime_type, rf.file_size, rf.created_at, rf.updated_at,
+                   r.workflow_name, r.task_description
+            FROM run_files rf
+            LEFT JOIN runs r ON rf.run_id = r.id
+            WHERE rf.run_id = ?1
+            ORDER BY rf.created_at ASC
+            "#,
+        )?;
+
+        let files: Vec<RunFileMetadata> = stmt
+            .query_map(params![run_id], |row| {
+                Ok(RunFileMetadata {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    workflow_id: row.get(2)?,
+                    file_name: row.get(3)?,
+                    file_path: row.get(4)?,
+                    mime_type: row.get(5)?,
+                    file_size: row.get(6)?,
+                    created_at: parse_datetime(row.get::<_, String>(7)?),
+                    updated_at: parse_datetime(row.get::<_, String>(8)?),
+                    workflow_name: row.get(9)?,
+                    run_name: row.get(10)?, // task_description as run name
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(files)
+    }
+
+    /// List all files (metadata only, with pagination)
+    pub fn list_all_files(&self, limit: i64, offset: i64) -> Result<(Vec<RunFileMetadata>, i64)> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        // Get total count
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM run_files", [], |row| row.get(0))?;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT rf.id, rf.run_id, rf.workflow_id, rf.file_name, rf.file_path,
+                   rf.mime_type, rf.file_size, rf.created_at, rf.updated_at,
+                   r.workflow_name, r.task_description
+            FROM run_files rf
+            LEFT JOIN runs r ON rf.run_id = r.id
+            ORDER BY rf.created_at DESC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )?;
+
+        let files: Vec<RunFileMetadata> = stmt
+            .query_map(params![limit, offset], |row| {
+                Ok(RunFileMetadata {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    workflow_id: row.get(2)?,
+                    file_name: row.get(3)?,
+                    file_path: row.get(4)?,
+                    mime_type: row.get(5)?,
+                    file_size: row.get(6)?,
+                    created_at: parse_datetime(row.get::<_, String>(7)?),
+                    updated_at: parse_datetime(row.get::<_, String>(8)?),
+                    workflow_name: row.get(9)?,
+                    run_name: row.get(10)?, // task_description as run name
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok((files, total))
+    }
+
+    /// Delete a file by ID
+    pub fn delete_file(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let deleted = conn.execute("DELETE FROM run_files WHERE id = ?1", params![id])?;
+        Ok(deleted > 0)
+    }
+
+    /// Delete files for a run (called when deleting a run)
+    pub fn delete_files_for_run(&self, run_id: &str) -> Result<i64> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let deleted = conn.execute("DELETE FROM run_files WHERE run_id = ?1", params![run_id])?;
+        Ok(deleted as i64)
+    }
+
+    /// Helper to convert a row to a RunFile
+    fn row_to_file(&self, row: &rusqlite::Row) -> Result<RunFile> {
+        Ok(RunFile {
+            id: row.get(0)?,
+            run_id: row.get(1)?,
+            workflow_id: row.get(2)?,
+            file_name: row.get(3)?,
+            file_path: row.get(4)?,
+            mime_type: row.get(5)?,
+            file_size: row.get(6)?,
+            content: row.get(7)?,
+            created_at: parse_datetime(row.get::<_, String>(8)?),
+            updated_at: parse_datetime(row.get::<_, String>(9)?),
+        })
+    }
+}
+
+/// Helper to parse RFC3339 datetime strings
+fn parse_datetime(s: String) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(&s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now())
 }
 
 impl Clone for RunRepository {

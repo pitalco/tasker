@@ -78,6 +78,12 @@ pub fn run() {
             commands::webview::tab_go_back,
             commands::webview::tab_go_forward,
             commands::webview::tab_reload,
+            // Files commands
+            commands::files::get_all_files,
+            commands::files::get_files_for_run,
+            commands::files::get_file_content,
+            commands::files::delete_file,
+            commands::files::download_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

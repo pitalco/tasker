@@ -67,6 +67,7 @@
 	const navItems = [
 		{ href: '/', label: 'Workflows', icon: 'stack' },
 		{ href: '/runs', label: 'Runs', icon: 'bolt' },
+		{ href: '/files', label: 'Files', icon: 'folder' },
 		{ href: '/record', label: 'Record', icon: 'record' },
 		{ href: '/settings', label: 'Settings', icon: 'cog' }
 	];
@@ -164,6 +165,10 @@
 					{:else if item.icon === 'record'}
 						<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
 							<circle cx="12" cy="12" r="8" />
+						</svg>
+					{:else if item.icon === 'folder'}
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+							<path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 						</svg>
 					{:else if item.icon === 'cog'}
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">

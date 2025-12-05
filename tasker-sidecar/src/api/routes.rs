@@ -5,7 +5,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::handlers::{health, providers, recording, replay, runs, workflow};
+use super::handlers::{files, health, providers, recording, replay, runs, workflow};
 use super::state::AppState;
 use super::websocket::ws_handler;
 
@@ -48,6 +48,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/runs/:run_id/cancel", post(runs::cancel_run))
         .route("/runs/:run_id/steps", get(runs::get_run_steps))
         .route("/runs/:run_id/logs", get(runs::get_run_logs))
+        .route("/runs/:run_id/files", get(files::list_files_for_run))
+        // Files endpoints
+        .route("/files", get(files::list_files))
+        .route("/files/:file_id", get(files::get_file_content))
+        .route("/files/:file_id/download", get(files::download_file))
+        .route("/files/:file_id", delete(files::delete_file))
         // WebSocket
         .route("/ws/:client_id", get(ws_handler))
         .layer(cors)
