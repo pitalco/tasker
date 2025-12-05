@@ -14,6 +14,10 @@ pub struct Workflow {
     pub is_deleted: bool,
     /// Task description - what this workflow automates
     pub task_description: Option<String>,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +60,10 @@ pub struct CreateWorkflowRequest {
     pub metadata: Option<WorkflowMetadata>,
     /// Task description - what this workflow automates
     pub task_description: Option<String>,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +74,10 @@ pub struct UpdateWorkflowRequest {
     pub metadata: Option<WorkflowMetadata>,
     /// Task description - what this workflow automates
     pub task_description: Option<String>,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 // Frontend-friendly workflow representation
@@ -81,6 +93,10 @@ pub struct WorkflowDto {
     pub version: i32,
     /// Task description - what this workflow automates
     pub task_description: Option<String>,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 impl From<Workflow> for WorkflowDto {
@@ -99,6 +115,8 @@ impl From<Workflow> for WorkflowDto {
             updated_at: w.updated_at,
             version: w.version,
             task_description: w.task_description,
+            stop_when: w.stop_when,
+            max_steps: w.max_steps,
         }
     }
 }
@@ -128,15 +146,22 @@ impl Default for LLMConfig {
     }
 }
 
+fn default_max_steps() -> i32 {
+    50
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub llm_config: LLMConfig,
+    #[serde(default = "default_max_steps")]
+    pub default_max_steps: i32,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
             llm_config: LLMConfig::default(),
+            default_max_steps: 50,
         }
     }
 }
@@ -146,4 +171,5 @@ pub struct UpdateSettingsRequest {
     pub api_keys: Option<ApiKeys>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
+    pub default_max_steps: Option<i32>,
 }

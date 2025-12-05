@@ -49,5 +49,26 @@ The system will replace these placeholders with actual values before execution.
 
 Example: If variable "email" is available, use {{email}} - NOT the actual email address.
 This keeps sensitive data secure. Never try to output or guess variable values.
+
+## File Formatting Requirements
+When creating or exporting files, ensure proper formatting:
+
+### CSV Files
+- Quote any field containing commas, newlines, or double quotes
+- Use double quotes: "value with, comma"
+- Escape quotes by doubling them: "He said ""hello"""
+- Examples:
+  - Date with comma: `"Jan 15, 2025"` (NOT: `Jan 15, 2025`)
+  - Name with comma: `"Smith, John"` (NOT: `Smith, John`)
+  - Value with quotes: `"The ""best"" option"` (NOT: `The "best" option`)
+
+### JSON Files
+- Ensure valid JSON structure with proper escaping
+- Use double quotes for strings
+- Escape special characters: \" for quotes, \n for newlines
+
+### General
+- Match column count to header count in tabular data
+- Validate data format before saving/exporting
 "#;
 

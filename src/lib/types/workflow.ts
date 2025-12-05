@@ -9,6 +9,10 @@ export interface Workflow {
 	version: number;
 	/** Task description - what this workflow automates */
 	task_description?: string;
+	/** Optional condition - agent will NOT stop until this is met */
+	stop_when?: string;
+	/** Max steps override (null = use global default) */
+	max_steps?: number;
 }
 
 export interface WorkflowStep {
@@ -173,6 +177,10 @@ export interface CreateWorkflowRequest {
 	metadata?: WorkflowMetadata;
 	/** Task description - what this workflow automates */
 	task_description?: string;
+	/** Optional condition - agent will NOT stop until this is met */
+	stop_when?: string;
+	/** Max steps override (null = use global default) */
+	max_steps?: number;
 }
 
 export interface UpdateWorkflowRequest {
@@ -182,4 +190,8 @@ export interface UpdateWorkflowRequest {
 	metadata?: WorkflowMetadata;
 	/** Task description - what this workflow automates */
 	task_description?: string;
+	/** Optional condition - agent will NOT stop until this is met */
+	stop_when?: string;
+	/** Max steps override (null = use global default) */
+	max_steps?: number;
 }

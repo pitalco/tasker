@@ -25,6 +25,9 @@
 	let defaultProvider = $state('gemini');
 	let defaultModel = $state('gemini-2.5-flash');
 
+	// Default max steps
+	let defaultMaxSteps = $state(50);
+
 	onMount(async () => {
 		try {
 			const settings = await getSettings();
@@ -35,6 +38,7 @@
 			};
 			defaultProvider = settings.llm_config.default_provider;
 			defaultModel = settings.llm_config.default_model;
+			defaultMaxSteps = settings.default_max_steps || 50;
 		} catch (e) {
 			console.warn('Failed to load settings, using defaults');
 		} finally {
@@ -73,7 +77,8 @@
 			await updateSettings({
 				api_keys: keysToSave,
 				default_provider: defaultProvider,
-				default_model: defaultModel
+				default_model: defaultModel,
+				default_max_steps: defaultMaxSteps
 			});
 			successMessage = 'Settings saved successfully!';
 			setTimeout(() => (successMessage = null), 3000);
@@ -215,6 +220,33 @@
 						</p>
 					</div>
 				{/if}
+			</div>
+		</div>
+
+		<!-- Execution Settings -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-orange h-2 border-b-3 border-black"></div>
+			<div class="p-6 space-y-4">
+				<div>
+					<h2 class="text-xl font-bold text-black">EXECUTION</h2>
+					<p class="text-sm text-black/60 font-medium mt-1">
+						Configure default execution behavior for workflows
+					</p>
+				</div>
+
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Default Max Steps</label>
+					<input
+						type="number"
+						bind:value={defaultMaxSteps}
+						class="input-brutal w-32"
+						min="1"
+						max="500"
+					/>
+					<p class="text-xs text-black/50 mt-1">
+						Maximum steps before a run stops (default: 50). Can be overridden per-workflow.
+					</p>
+				</div>
 			</div>
 		</div>
 

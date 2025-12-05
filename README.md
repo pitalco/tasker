@@ -1,13 +1,13 @@
 # Tasker
 
-**Open-source agent builder to automate anything.**
+**Open-source agent builder to automate anything in the browser.**
 
-Record a task as a template. Feed it into Tasker with additional instructions and watch magic happen.
+Create workflows by recording browser actions, then let AI execute them intelligently.
 
 ## How It Works
 
-1. **Record** - Click "Start Recording" and perform the task you want to automate in Chrome
-2. **Save** - Stop recording to save your workflow as a reusable template
+1. **Create** - Click "Create Workflow" and start recording your browser actions
+2. **Record** - Perform the task you want to automate in Chrome
 3. **Run** - Execute the workflow with AI that adapts to dynamic content
 
 ## Taskfiles
@@ -41,6 +41,9 @@ Taskfiles are to browser automation what Dockerfiles are to containers - **porta
 - **AI-Powered Execution** - LLMs understand context and adapt to page changes
 - **Multi-Provider** - Works with Claude, OpenAI, or Gemini
 - **Desktop App** - Native performance with Tauri (Windows, macOS, Linux)
+- **File Management** - View, download, and manage files created during runs
+- **Stop When Conditions** - Define completion criteria (e.g., "collected at least 10 results")
+- **Configurable Max Steps** - Set global defaults or per-workflow limits
 
 ### Automation Targets
 
@@ -95,17 +98,19 @@ bun run tauri build
 ```
 tasker/
 ├── src/                    # SvelteKit frontend
-│   ├── routes/             # Pages (record, workflows, settings)
+│   ├── routes/             # Pages (workflows, runs, files, settings)
 │   └── lib/                # Components and services
 ├── src-tauri/              # Tauri backend (Rust)
+│   ├── src/
+│   │   ├── commands/       # Tauri command handlers
+│   │   ├── db/             # SQLite database layer
+│   │   └── taskfile/       # Taskfile import/export
 └── tasker-sidecar/         # Browser automation engine (Rust)
     ├── src/
     │   ├── api/            # HTTP/WebSocket server
     │   ├── browser/        # Chrome automation (CDP)
     │   ├── recording/      # Workflow recording
-    │   ├── replay/         # Workflow replay
-    │   └── runs/           # AI execution
-    └── tests/              # Integration tests
+    │   └── runs/           # AI execution engine
 ```
 
 ## Tech Stack
@@ -116,14 +121,21 @@ tasker/
 | Desktop | Tauri 2 |
 | Automation | Rust, chromiumoxide (CDP) |
 | AI | Claude, OpenAI, Gemini via genai |
+| Database | SQLite |
 
 ## Configuration
 
 Add your LLM API key in Settings. Supported providers:
 
-- **Anthropic**
-- **OpenAI**
-- **Google**
+- **Anthropic** (Claude)
+- **OpenAI** (GPT-4, etc.)
+- **Google** (Gemini)
+
+### Execution Settings
+
+- **Default Max Steps** - Maximum steps before a run stops (default: 50)
+- **Per-Workflow Override** - Set custom max steps for specific workflows
+- **Stop When** - Define completion conditions for workflows
 
 ## Contributing
 

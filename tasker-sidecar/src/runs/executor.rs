@@ -100,6 +100,23 @@ impl RunExecutor {
             ));
         }
 
+        // Add stop condition if provided (AGGRESSIVE)
+        if let Some(stop_when) = run.metadata.get("stop_when").and_then(|v| v.as_str()) {
+            if !stop_when.is_empty() {
+                user_prompt.push_str(&format!(r#"
+
+⚠️ CRITICAL: COMPLETION REQUIREMENT ⚠️
+════════════════════════════════════════
+DO NOT call the done() tool until: {}
+
+You MUST continue working until this condition is fully satisfied.
+Calling done() before meeting this requirement is a FAILURE.
+Keep taking actions until the condition above is clearly met.
+════════════════════════════════════════
+"#, stop_when));
+            }
+        }
+
         // Create selector map storage (will be updated before each LLM call)
         let selector_map = Arc::new(RwLock::new(SelectorMap::new()));
 
@@ -134,10 +151,18 @@ impl RunExecutor {
         let mut step_number = 0;
         let mut first_iteration = true;
 
+        // Get max_steps from run metadata (workflow override) or use config default
+        let max_steps = run
+            .metadata
+            .get("max_steps")
+            .and_then(|v| v.as_i64())
+            .map(|v| v as usize)
+            .unwrap_or(self.config.max_steps);
+
         // Agent loop
         loop {
-            if step_number >= self.config.max_steps {
-                self.logger.warn(run_id, format!("Reached maximum steps limit ({})", self.config.max_steps));
+            if step_number >= max_steps {
+                self.logger.warn(run_id, format!("Reached maximum steps limit ({})", max_steps));
                 self.logger.status(
                     run_id,
                     RunStatus::Completed,

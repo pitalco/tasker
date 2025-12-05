@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { formatFileSize, getFileContent, downloadFile } from '$lib/services/filesService';
 	import type { TaskerFile, FileContentResponse } from '$lib/types/file';
 	import FileViewer from './FileViewer.svelte';
@@ -17,7 +18,10 @@
 	let downloading = $state(false);
 
 	$effect(() => {
-		loadContent();
+		// Track file.id - effect only re-runs when file changes
+		file.id;
+		// Untrack loadContent to prevent state updates from re-triggering effect
+		untrack(() => loadContent());
 	});
 
 	async function loadContent() {

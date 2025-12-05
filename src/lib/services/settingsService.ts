@@ -14,6 +14,7 @@ export interface LLMConfig {
 
 export interface AppSettings {
 	llm_config: LLMConfig;
+	default_max_steps: number;
 }
 
 // Available models per provider
@@ -47,11 +48,13 @@ export async function updateSettings(options: {
 	api_keys?: ApiKeys;
 	default_provider?: string;
 	default_model?: string;
+	default_max_steps?: number;
 }): Promise<AppSettings> {
 	return invoke<AppSettings>('update_settings', {
 		apiKeys: options.api_keys,
 		defaultProvider: options.default_provider,
-		defaultModel: options.default_model
+		defaultModel: options.default_model,
+		defaultMaxSteps: options.default_max_steps
 	});
 }
 

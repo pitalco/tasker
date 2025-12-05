@@ -222,6 +222,12 @@ pub struct Workflow {
     /// Task description - what this workflow automates
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_description: Option<String>,
+    /// Optional condition - agent will NOT stop until this is met
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<i32>,
 }
 
 fn default_datetime() -> DateTime<Utc> {
@@ -313,6 +319,8 @@ impl Workflow {
             updated_at: now,
             version: 1,
             task_description: None,
+            stop_when: None,
+            max_steps: None,
         }
     }
 
@@ -334,6 +342,8 @@ impl Workflow {
             updated_at: now,
             version: 1,
             task_description: Some(task_description),
+            stop_when: None,
+            max_steps: None,
         }
     }
 

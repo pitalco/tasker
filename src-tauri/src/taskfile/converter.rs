@@ -63,6 +63,8 @@ pub fn taskfile_to_workflow(taskfile: &Taskfile) -> WorkflowDto {
         updated_at: String::new(), // Will be set by repository
         version: 1,
         task_description: taskfile.metadata.description.clone(),
+        stop_when: None,
+        max_steps: None,
     }
 }
 

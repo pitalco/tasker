@@ -36,6 +36,10 @@ pub struct StartReplayRequest {
     pub iterations: i32,
     #[serde(default)]
     pub headless: bool,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 fn default_iterations() -> i32 {

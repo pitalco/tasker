@@ -76,6 +76,8 @@ pub async fn start_replay(
         "hints": hints,
         "start_url": workflow.start_url,
         "variables": variables,
+        "stop_when": request.stop_when.as_deref().or(workflow.stop_when.as_deref()),
+        "max_steps": request.max_steps.or(workflow.max_steps),
     });
 
     let run_id = run.id.clone();

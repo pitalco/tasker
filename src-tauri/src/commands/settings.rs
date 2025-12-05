@@ -12,11 +12,13 @@ pub async fn update_settings(
     api_keys: Option<ApiKeys>,
     default_provider: Option<String>,
     default_model: Option<String>,
+    default_max_steps: Option<i32>,
 ) -> Result<AppSettings, String> {
     let req = UpdateSettingsRequest {
         api_keys,
         default_provider,
         default_model,
+        default_max_steps,
     };
 
     db::update_settings(req)

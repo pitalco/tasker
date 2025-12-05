@@ -48,6 +48,10 @@ export interface StartReplayOptions {
 	variables?: Record<string, unknown>;
 	iterations?: number;
 	headless?: boolean;
+	/** Optional condition - agent will NOT stop until this is met */
+	stop_when?: string;
+	/** Max steps override (undefined = use global default) */
+	max_steps?: number;
 }
 
 // Sidecar management

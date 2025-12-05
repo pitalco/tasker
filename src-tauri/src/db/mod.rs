@@ -127,5 +127,20 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
 
+    // Migration: Add stop_when column if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE workflows ADD COLUMN stop_when TEXT")
+        .execute(pool)
+        .await;
+
+    // Migration: Add max_steps column if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE workflows ADD COLUMN max_steps INTEGER")
+        .execute(pool)
+        .await;
+
+    // Migration: Add default_max_steps column to app_settings if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE app_settings ADD COLUMN default_max_steps INTEGER DEFAULT 50")
+        .execute(pool)
+        .await;
+
     Ok(())
 }

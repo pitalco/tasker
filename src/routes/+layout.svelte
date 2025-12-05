@@ -68,7 +68,6 @@
 		{ href: '/', label: 'Workflows', icon: 'stack' },
 		{ href: '/runs', label: 'Runs', icon: 'bolt' },
 		{ href: '/files', label: 'Files', icon: 'folder' },
-		{ href: '/record', label: 'Record', icon: 'record' },
 		{ href: '/settings', label: 'Settings', icon: 'cog' }
 	];
 </script>
@@ -161,10 +160,6 @@
 					{:else if item.icon === 'bolt'}
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 							<path d="M13 10V3L4 14h7v7l9-11h-7z" />
-						</svg>
-					{:else if item.icon === 'record'}
-						<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-							<circle cx="12" cy="12" r="8" />
 						</svg>
 					{:else if item.icon === 'folder'}
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">

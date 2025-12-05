@@ -181,7 +181,9 @@
 				task_description: taskDescription || undefined,
 				iterations,
 				headless,
-				variables: variablesMap
+				variables: variablesMap,
+				stop_when: workflow.stop_when || undefined,
+				max_steps: workflow.max_steps ?? undefined
 			});
 
 			sessionId = response.session_id;

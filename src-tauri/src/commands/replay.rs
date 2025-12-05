@@ -12,6 +12,10 @@ pub struct StartReplayRequest {
     pub variables: Option<HashMap<String, serde_json::Value>>,
     pub iterations: Option<i32>,
     pub headless: Option<bool>,
+    /// Optional condition - agent will NOT stop until this is met
+    pub stop_when: Option<String>,
+    /// Max steps override (None = use global default)
+    pub max_steps: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -97,6 +101,8 @@ pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse,
         "variables": request.variables.unwrap_or_default(),
         "iterations": request.iterations.unwrap_or(1),
         "headless": request.headless.unwrap_or(false),
+        "stop_when": request.stop_when,
+        "max_steps": request.max_steps,
     });
 
     let response = client

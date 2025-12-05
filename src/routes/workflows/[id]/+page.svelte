@@ -17,6 +17,8 @@
 	// Editable fields
 	let editName = $state('');
 	let editTaskDescription = $state('');
+	let editStopWhen = $state('');
+	let editMaxSteps = $state<number | null>(null);
 	let editVariables = $state<WorkflowVariable[]>([]);
 
 	// UI state
@@ -36,6 +38,8 @@
 			workflow = found;
 			editName = found.name;
 			editTaskDescription = found.task_description || '';
+			editStopWhen = found.stop_when || '';
+			editMaxSteps = found.max_steps ?? null;
 			editVariables = JSON.parse(JSON.stringify(found.variables || []));
 		}
 
@@ -56,6 +60,8 @@
 			await workflowState.updateWorkflow(workflow.id, {
 				name: editName,
 				task_description: editTaskDescription || undefined,
+				stop_when: editStopWhen || undefined,
+				max_steps: editMaxSteps ?? undefined,
 				variables: editVariables,
 				metadata: workflow.metadata
 			});
@@ -219,6 +225,35 @@
 					></textarea>
 				</div>
 
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Stop When (Optional)</label>
+					<textarea
+						bind:value={editStopWhen}
+						oninput={markChanged}
+						class="input-brutal h-16 resize-none"
+						placeholder="e.g., you have collected at least 10 results"
+					></textarea>
+					<p class="text-xs text-black/50 mt-1">
+						Agent will NOT stop until this condition is met
+					</p>
+				</div>
+
+				<div>
+					<label class="block text-sm font-bold text-black uppercase mb-2">Max Steps (Optional)</label>
+					<input
+						type="number"
+						bind:value={editMaxSteps}
+						oninput={markChanged}
+						class="input-brutal w-32"
+						placeholder="50"
+						min="1"
+						max="500"
+					/>
+					<p class="text-xs text-black/50 mt-1">
+						Leave empty to use global default from Settings
+					</p>
+				</div>
+
 				<!-- Metadata badges -->
 				<div class="flex flex-wrap gap-2">
 					{#if workflow.metadata?.recording_source === 'recorded'}
@@ -306,6 +341,8 @@
 							onclick={() => {
 								editName = workflow?.name || '';
 								editTaskDescription = workflow?.task_description || '';
+								editStopWhen = workflow?.stop_when || '';
+								editMaxSteps = workflow?.max_steps ?? null;
 								editVariables = JSON.parse(JSON.stringify(workflow?.variables || []));
 								hasChanges = false;
 							}}

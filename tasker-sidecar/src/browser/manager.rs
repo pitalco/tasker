@@ -76,9 +76,12 @@ impl BrowserManager {
         }
 
         // Clean launch flags - no extra windows, no extensions
+        // Note: --disable-infobars is deprecated but kept for older Chrome versions
+        // --enable-automation is the switch that causes the yellow banner, so we exclude it
         config = config
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--disable-infobars")
+            .arg("--enable-automation=false")
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-default-apps")
