@@ -53,3 +53,6 @@ keyring = "3"
 
 # Browser opening
 open = "5"
+
+# Environment variables from .env files
+dotenvy = "0.15"

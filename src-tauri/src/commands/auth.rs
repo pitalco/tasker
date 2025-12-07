@@ -6,8 +6,13 @@ const AUTH_TOKEN_KEY: &str = "auth_token";
 const USER_ID_KEY: &str = "user_id";
 const USER_EMAIL_KEY: &str = "user_email";
 
-// Backend URL - update this for production
-const BACKEND_URL: &str = "https://api.tasker-app.com";
+// Default production backend URL
+const DEFAULT_BACKEND_URL: &str = "https://api.automatewithtasker.com";
+
+/// Get the backend URL from environment variable or use default
+fn get_backend_url() -> String {
+    std::env::var("TASKER_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthState {
@@ -113,8 +118,9 @@ pub async fn check_auth_status() -> Result<AuthState, String> {
 
     // Verify session with backend
     let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
     let response = client
-        .get(format!("{}/api/auth/session", BACKEND_URL))
+        .get(format!("{}/api/auth/session", backend_url))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
@@ -151,7 +157,7 @@ pub async fn check_auth_status() -> Result<AuthState, String> {
 
     // Get subscription status
     let sub_response = client
-        .get(format!("{}/subscription/status", BACKEND_URL))
+        .get(format!("{}/subscription/status", backend_url))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await;
@@ -181,8 +187,9 @@ pub async fn check_auth_status() -> Result<AuthState, String> {
 #[tauri::command]
 pub async fn send_magic_link(email: String) -> Result<(), String> {
     let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
     let response = client
-        .post(format!("{}/api/auth/magic-link/send", BACKEND_URL))
+        .post(format!("{}/api/auth/sign-in/magic-link", backend_url))
         .json(&serde_json::json!({ "email": email }))
         .send()
         .await
@@ -201,8 +208,9 @@ pub async fn send_magic_link(email: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn verify_magic_link(token: String) -> Result<AuthState, String> {
     let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
     let response = client
-        .post(format!("{}/api/auth/magic-link/verify", BACKEND_URL))
+        .post(format!("{}/api/auth/magic-link/verify", backend_url))
         .json(&serde_json::json!({ "token": token }))
         .send()
         .await
@@ -247,7 +255,7 @@ pub async fn verify_magic_link(token: String) -> Result<AuthState, String> {
     // Check subscription status
     let sub_client = reqwest::Client::new();
     let sub_response = sub_client
-        .get(format!("{}/subscription/status", BACKEND_URL))
+        .get(format!("{}/subscription/status", backend_url))
         .header("Authorization", format!("Bearer {}", session_token))
         .send()
         .await;
@@ -281,8 +289,9 @@ pub async fn open_checkout() -> Result<(), String> {
         .ok_or("Not authenticated")?;
 
     let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
     let response = client
-        .post(format!("{}/subscription/checkout", BACKEND_URL))
+        .post(format!("{}/subscription/checkout", backend_url))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
@@ -318,8 +327,9 @@ pub async fn open_customer_portal() -> Result<(), String> {
         .ok_or("Not authenticated")?;
 
     let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
     let response = client
-        .post(format!("{}/subscription/portal", BACKEND_URL))
+        .post(format!("{}/subscription/portal", backend_url))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
