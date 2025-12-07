@@ -1,3 +1,3 @@
 pub mod message_builder;
 
-pub use message_builder::UserMessageBuilder;
+pub use message_builder::{AutomationMode, UserMessageBuilder};

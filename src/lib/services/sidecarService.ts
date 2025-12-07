@@ -105,6 +105,28 @@ export async function getReplayStatus(sessionId: string): Promise<ReplayStatus> 
 	return invoke<ReplayStatus>('get_replay_status', { sessionId });
 }
 
+// OS Automation
+export interface OsResponse {
+	run_id: string;
+	status: string;
+}
+
+export interface StartOsOptions {
+	task_description: string;
+	custom_instructions?: string;
+	llm_provider?: string;
+	llm_model?: string;
+	max_steps?: number;
+}
+
+export async function startOsAutomation(options: StartOsOptions): Promise<OsResponse> {
+	return invoke<OsResponse>('start_os_automation', { request: options });
+}
+
+export async function stopOsAutomation(runId: string): Promise<boolean> {
+	return invoke<boolean>('stop_os_automation', { runId });
+}
+
 // WebSocket connection for real-time updates
 export class SidecarWebSocket {
 	private ws: WebSocket | null = null;

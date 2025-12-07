@@ -58,6 +58,15 @@ pub async fn get_run(
     Ok(Json(run))
 }
 
+/// Automation mode for runs
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RunMode {
+    #[default]
+    Browser,
+    Os,
+}
+
 /// Create a new run request
 #[derive(Debug, Deserialize)]
 pub struct StartRunRequest {
@@ -73,6 +82,9 @@ pub struct StartRunRequest {
     #[serde(default = "default_viewport_height")]
     pub viewport_height: i32,
     pub hints: Option<serde_json::Value>,
+    /// Automation mode: "browser" (default) or "os"
+    #[serde(default)]
+    pub mode: RunMode,
 }
 
 fn default_viewport_width() -> i32 {
@@ -118,6 +130,12 @@ pub async fn start_run(
     if let Some(url) = &request.start_url {
         metadata.insert("start_url".to_string(), serde_json::Value::String(url.clone()));
     }
+    // Store automation mode
+    let mode_str = match request.mode {
+        RunMode::Browser => "browser",
+        RunMode::Os => "os",
+    };
+    metadata.insert("mode".to_string(), serde_json::Value::String(mode_str.to_string()));
     run.metadata = serde_json::Value::Object(metadata);
 
     let run_id = run.id.clone();

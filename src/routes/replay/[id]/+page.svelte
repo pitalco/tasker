@@ -9,6 +9,8 @@
 		getReplayStatus,
 		startSidecar,
 		getWebSocket,
+		startOsAutomation,
+		stopOsAutomation,
 		type ReplayStatus
 	} from '$lib/services/sidecarService';
 	import {
@@ -33,8 +35,13 @@
 	let statusPolling = $state<ReturnType<typeof setInterval> | null>(null);
 	let results = $state<Array<{ step_id: string; success: boolean; error?: string; tool_name?: string; tool_params?: string }>>([]);
 
+	// Automation mode: browser or os
+	type AutomationMode = 'browser' | 'os';
+	let automationMode = $state<AutomationMode>('browser');
+
 	// Friendly display names for tools
 	const toolDisplayNames: Record<string, string> = {
+		// Browser tools
 		'click_element': 'Clicked on element',
 		'input_text': 'Typed text',
 		'select_dropdown_option': 'Selected option',
@@ -50,7 +57,20 @@
 		'read_file': 'Read file',
 		'write_file': 'Wrote file',
 		'replace_in_file': 'Replaced in file',
-		'done': 'Completed task'
+		'done': 'Completed task',
+		// OS tools
+		'os_screenshot': 'Took screenshot',
+		'os_click': 'Clicked at position',
+		'os_double_click': 'Double-clicked',
+		'os_right_click': 'Right-clicked',
+		'os_move': 'Moved mouse',
+		'os_scroll': 'Scrolled',
+		'os_drag': 'Dragged',
+		'os_type': 'Typed text',
+		'os_hotkey': 'Pressed hotkey',
+		'launch_app': 'Launched app',
+		'list_windows': 'Listed windows',
+		'os_wait': 'Waited'
 	};
 
 	function getToolDisplay(toolName?: string): string {
@@ -164,37 +184,54 @@
 				console.warn('WebSocket failed, using polling');
 			}
 
-			// Convert workflow variables to map format
-			const variablesMap: Record<string, unknown> = {};
-			if (workflow.variables) {
-				for (const v of workflow.variables) {
-					if (v.default_value !== undefined) {
-						variablesMap[v.name] = v.default_value;
+			if (automationMode === 'os') {
+				// OS automation mode
+				const response = await startOsAutomation({
+					task_description: taskDescription || workflow.task_description || workflow.name,
+					custom_instructions: workflow.task_description,
+					llm_provider: llmProvider,
+					llm_model: llmModel,
+					max_steps: workflow.max_steps ?? undefined
+				});
+
+				sessionId = response.run_id;
+				isRunning = true;
+				isStarting = false;
+				totalSteps = workflow.max_steps || 50;
+			} else {
+				// Browser automation mode
+				// Convert workflow variables to map format
+				const variablesMap: Record<string, unknown> = {};
+				if (workflow.variables) {
+					for (const v of workflow.variables) {
+						if (v.default_value !== undefined) {
+							variablesMap[v.name] = v.default_value;
+						}
 					}
 				}
+
+				const response = await startReplay({
+					workflow,
+					llm_provider: llmProvider,
+					llm_model: llmModel,
+					task_description: taskDescription || undefined,
+					iterations,
+					headless,
+					variables: variablesMap,
+					stop_when: workflow.stop_when || undefined,
+					max_steps: workflow.max_steps ?? undefined
+				});
+
+				sessionId = response.session_id;
+				isRunning = true;
+				isStarting = false;
+				totalSteps = workflow.steps.length * iterations;
 			}
-
-			const response = await startReplay({
-				workflow,
-				llm_provider: llmProvider,
-				llm_model: llmModel,
-				task_description: taskDescription || undefined,
-				iterations,
-				headless,
-				variables: variablesMap,
-				stop_when: workflow.stop_when || undefined,
-				max_steps: workflow.max_steps ?? undefined
-			});
-
-			sessionId = response.session_id;
-			isRunning = true;
-			isStarting = false;
-			totalSteps = workflow.steps.length * iterations;
 
 			// Start polling
 			statusPolling = setInterval(pollStatus, 1000);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to start replay';
+			error = e instanceof Error ? e.message : 'Failed to start';
 			isStarting = false;
 		}
 	}
@@ -260,7 +297,11 @@
 		ws.off('error', handleError);
 
 		try {
-			await stopReplay(sessionId);
+			if (automationMode === 'os') {
+				await stopOsAutomation(sessionId);
+			} else {
+				await stopReplay(sessionId);
+			}
 		} catch {
 			// Ignore errors
 		}
@@ -337,13 +378,62 @@
 			</div>
 		{/if}
 
+		<!-- Automation Mode Toggle -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-yellow h-2 border-b-3 border-black"></div>
+			<div class="p-6">
+				<label class="block text-sm font-bold text-black uppercase mb-3">Automation Mode</label>
+				<div class="grid grid-cols-2 gap-3">
+					<button
+						onclick={() => (automationMode = 'browser')}
+						class="p-4 border-3 border-black font-bold text-sm cursor-pointer flex items-center gap-3 {automationMode === 'browser' ? 'bg-brutal-cyan' : 'bg-white'}"
+						style="box-shadow: 3px 3px 0 0 #000;"
+					>
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+							<path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+						</svg>
+						<div class="text-left">
+							<div>BROWSER</div>
+							<div class="text-xs font-medium text-black/60">Web automation</div>
+						</div>
+					</button>
+					<button
+						onclick={() => (automationMode = 'os')}
+						class="p-4 border-3 border-black font-bold text-sm cursor-pointer flex items-center gap-3 {automationMode === 'os' ? 'bg-brutal-cyan' : 'bg-white'}"
+						style="box-shadow: 3px 3px 0 0 #000;"
+					>
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+							<path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+						</svg>
+						<div class="text-left">
+							<div>DESKTOP</div>
+							<div class="text-xs font-medium text-black/60">Full OS control</div>
+						</div>
+					</button>
+				</div>
+				{#if automationMode === 'os'}
+					<p class="text-xs text-black/60 font-medium mt-3">
+						Desktop mode uses vision-based automation to control any application on your computer.
+					</p>
+				{:else}
+					<p class="text-xs text-black/60 font-medium mt-3">
+						Browser mode automates web pages using recorded workflow steps as hints.
+					</p>
+				{/if}
+			</div>
+		</div>
+
 		<!-- Settings -->
 		<div class="card-brutal p-0 overflow-hidden">
 			<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
 			<div class="p-6 space-y-6">
 				<h2 class="text-xl font-bold text-black">AI AGENT SETTINGS</h2>
 				<p class="text-sm text-black/60 font-medium -mt-4">
-					AI uses recorded steps as hints, adapting to page changes
+					{#if automationMode === 'os'}
+						Vision-based AI controls your desktop using screenshots
+					{:else}
+						AI uses recorded steps as hints, adapting to page changes
+					{/if}
 				</p>
 
 				<!-- LLM Provider -->
@@ -402,29 +492,31 @@
 					></textarea>
 				</div>
 
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-					<!-- Iterations -->
-					<div>
-						<label class="block text-sm font-bold text-black uppercase mb-2">Iterations</label>
-						<input type="number" bind:value={iterations} min="1" max="100" class="input-brutal" />
-						<p class="text-xs text-black/60 font-medium mt-1">Run the workflow multiple times</p>
-					</div>
-
-					<!-- Headless -->
-					<div class="flex items-center justify-between sm:justify-start sm:gap-6">
+				{#if automationMode === 'browser'}
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+						<!-- Iterations -->
 						<div>
-							<div class="font-bold text-black">Headless Mode</div>
-							<div class="text-sm text-black/60 font-medium">Run without visible browser</div>
+							<label class="block text-sm font-bold text-black uppercase mb-2">Iterations</label>
+							<input type="number" bind:value={iterations} min="1" max="100" class="input-brutal" />
+							<p class="text-xs text-black/60 font-medium mt-1">Run the workflow multiple times</p>
 						</div>
-						<button
-							onclick={() => (headless = !headless)}
-							class="w-14 h-8 border-3 border-black transition-all cursor-pointer {headless ? 'bg-brutal-lime' : 'bg-white'}"
-							style="box-shadow: 2px 2px 0 0 #000;"
-						>
-							<div class="w-5 h-5 bg-black transition-transform duration-150 {headless ? 'translate-x-6' : 'translate-x-1'}"></div>
-						</button>
+
+						<!-- Headless -->
+						<div class="flex items-center justify-between sm:justify-start sm:gap-6">
+							<div>
+								<div class="font-bold text-black">Headless Mode</div>
+								<div class="text-sm text-black/60 font-medium">Run without visible browser</div>
+							</div>
+							<button
+								onclick={() => (headless = !headless)}
+								class="w-14 h-8 border-3 border-black transition-all cursor-pointer {headless ? 'bg-brutal-lime' : 'bg-white'}"
+								style="box-shadow: 2px 2px 0 0 #000;"
+							>
+								<div class="w-5 h-5 bg-black transition-transform duration-150 {headless ? 'translate-x-6' : 'translate-x-1'}"></div>
+							</button>
+						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 		</div>
 
@@ -441,7 +533,7 @@
 				<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M8 5v14l11-7z" />
 				</svg>
-				RUN WORKFLOW
+				{automationMode === 'os' ? 'RUN DESKTOP AUTOMATION' : 'RUN WORKFLOW'}
 			{/if}
 		</button>
 	{:else}

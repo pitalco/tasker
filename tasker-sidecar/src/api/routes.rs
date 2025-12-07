@@ -5,7 +5,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::handlers::{files, health, providers, recording, replay, runs, workflow};
+use super::handlers::{files, health, os, providers, recording, replay, runs, workflow};
 use super::state::AppState;
 use super::websocket::ws_handler;
 
@@ -38,6 +38,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/replay/start", post(replay::start_replay))
         .route("/replay/:session_id/stop", post(replay::stop_replay))
         .route("/replay/:session_id/status", get(replay::get_replay_status))
+        // OS automation endpoints
+        .route("/os/start", post(os::start_os_automation))
+        .route("/os/:run_id/stop", post(os::stop_os_automation))
         // Workflow endpoints
         .route("/workflow", post(workflow::create_workflow))
         // Runs endpoints

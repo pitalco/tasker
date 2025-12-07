@@ -69,6 +69,9 @@ pub fn run() {
             commands::replay::start_replay,
             commands::replay::stop_replay,
             commands::replay::get_replay_status,
+            // OS automation commands
+            commands::replay::start_os_automation,
+            commands::replay::stop_os_automation,
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,

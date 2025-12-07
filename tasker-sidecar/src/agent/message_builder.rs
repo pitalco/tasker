@@ -1,23 +1,60 @@
 use crate::browser::DOMExtractionResult;
 use crate::models::RecordedAction;
 
+/// Mode of operation for the message builder
+#[derive(Debug, Clone, PartialEq)]
+pub enum AutomationMode {
+    /// Browser automation with DOM elements
+    Browser,
+    /// OS-level automation with grid overlay
+    Os,
+}
+
+impl Default for AutomationMode {
+    fn default() -> Self {
+        AutomationMode::Browser
+    }
+}
+
 /// Builds the user message for each LLM turn
 pub struct UserMessageBuilder {
+    mode: AutomationMode,
     recorded_workflow: Option<Vec<RecordedAction>>,
     custom_instructions: Option<String>,
+    // Browser mode fields
     url: String,
     title: String,
     elements_repr: String,
+    // OS mode fields
+    grid_description: Option<String>,
+    active_windows: Option<String>,
 }
 
 impl UserMessageBuilder {
     pub fn new() -> Self {
         Self {
+            mode: AutomationMode::Browser,
             recorded_workflow: None,
             custom_instructions: None,
             url: String::new(),
             title: String::new(),
             elements_repr: String::new(),
+            grid_description: None,
+            active_windows: None,
+        }
+    }
+
+    /// Create a builder for OS automation mode
+    pub fn new_os() -> Self {
+        Self {
+            mode: AutomationMode::Os,
+            recorded_workflow: None,
+            custom_instructions: None,
+            url: String::new(),
+            title: String::new(),
+            elements_repr: String::new(),
+            grid_description: None,
+            active_windows: None,
         }
     }
 
@@ -33,11 +70,18 @@ impl UserMessageBuilder {
         self
     }
 
-    /// Set the current browser state
+    /// Set the current browser state (browser mode)
     pub fn with_browser_state(mut self, url: &str, title: &str, dom_result: &DOMExtractionResult) -> Self {
         self.url = url.to_string();
         self.title = title.to_string();
         self.elements_repr = dom_result.llm_representation.clone();
+        self
+    }
+
+    /// Set the OS state (OS mode)
+    pub fn with_os_state(mut self, grid_description: &str, active_windows: Option<&str>) -> Self {
+        self.grid_description = Some(grid_description.to_string());
+        self.active_windows = active_windows.map(|s| s.to_string());
         self
     }
 
@@ -62,12 +106,22 @@ impl UserMessageBuilder {
             }
         }
 
-        // Add browser state (always present)
-        parts.push(format_browser_state(
-            &self.url,
-            &self.title,
-            &self.elements_repr,
-        ));
+        // Add state based on mode
+        match self.mode {
+            AutomationMode::Browser => {
+                parts.push(format_browser_state(
+                    &self.url,
+                    &self.title,
+                    &self.elements_repr,
+                ));
+            }
+            AutomationMode::Os => {
+                parts.push(format_os_state(
+                    self.grid_description.as_deref().unwrap_or(""),
+                    self.active_windows.as_deref(),
+                ));
+            }
+        }
 
         parts.join("\n\n")
     }
@@ -99,6 +153,21 @@ fn format_browser_state(url: &str, title: &str, elements_repr: &str) -> String {
         "<browser_state>\nURL: {}\nTitle: {}\n\nInteractive Elements:\n{}</browser_state>",
         url, title, elements_repr
     )
+}
+
+/// Format OS state with grid description and windows
+fn format_os_state(grid_description: &str, active_windows: Option<&str>) -> String {
+    let mut state = format!(
+        "<os_state>\n{}\n\nUse the grid overlay in the screenshot to identify UI element locations.\nReference cells like 'A1', 'B5', 'C12' when using click/type tools.",
+        grid_description
+    );
+
+    if let Some(windows) = active_windows {
+        state.push_str(&format!("\n\nActive Windows:\n{}", windows));
+    }
+
+    state.push_str("\n</os_state>");
+    state
 }
 
 #[cfg(test)]

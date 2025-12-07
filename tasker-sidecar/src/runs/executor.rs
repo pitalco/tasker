@@ -224,6 +224,7 @@ Keep taking actions until the condition above is clearly met.
             browser: Arc::clone(&self.browser),
             selector_map: Arc::clone(&selector_map),
             file_repository: Some(Arc::new(self.logger.repository().clone())),
+            desktop: None, // Browser-only mode, no desktop manager
         };
 
         // Check if using Tasker Fast (Railway proxy)

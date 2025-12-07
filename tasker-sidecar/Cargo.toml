@@ -53,5 +53,11 @@ keyring = "3"
 # MIME type detection for file storage
 mime_guess = "2.0"
 
+# OS-level automation (vision-based)
+enigo = "0.2"           # Cross-platform mouse/keyboard input
+xcap = "0.0.14"         # Cross-platform screenshots
+imageproc = "0.25"      # Drawing on images (grid overlay)
+ab_glyph = "0.2"        # Font rendering for grid labels
+
 [dev-dependencies]
 tokio-test = "0.4"
