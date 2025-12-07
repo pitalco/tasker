@@ -135,59 +135,6 @@
 			</div>
 		</div>
 	{:else}
-		<!-- API Keys Section -->
-		<div class="card-brutal p-0 overflow-hidden">
-			<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
-			<div class="p-6 space-y-6">
-				<div>
-					<h2 class="text-xl font-bold text-black">API KEYS</h2>
-					<p class="text-sm text-black/60 font-medium mt-1">
-						Enter API keys for the providers you want to use. Keys are stored locally.
-					</p>
-				</div>
-
-				<div class="space-y-4">
-					{#each apiKeyProviders as provider}
-						<div
-							class="border-3 border-black p-4 {hasKey(provider.id)
-								? 'bg-brutal-lime/20'
-								: 'bg-white'}"
-							style="box-shadow: 3px 3px 0 0 #000;"
-						>
-							<div class="flex items-center justify-between mb-2">
-								<div class="flex items-center gap-2">
-									<span class="font-bold text-black">{provider.name}</span>
-									{#if hasKey(provider.id)}
-										<svg
-											class="w-5 h-5 text-green-600"
-											fill="currentColor"
-											viewBox="0 0 20 20"
-										>
-											<path
-												fill-rule="evenodd"
-												d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-												clip-rule="evenodd"
-											/>
-										</svg>
-									{/if}
-								</div>
-								<span class="text-xs font-medium text-black/60">
-									{PROVIDER_MODELS[provider.id]?.length || 0} models
-								</span>
-							</div>
-
-							<input
-								type="password"
-								bind:value={apiKeys[provider.id as keyof ApiKeys]}
-								placeholder="Enter your {provider.name} API key"
-								class="input-brutal text-sm"
-							/>
-						</div>
-					{/each}
-				</div>
-			</div>
-		</div>
-
 		<!-- Account & Subscription Section -->
 		<div class="card-brutal p-0 overflow-hidden">
 			<div class="bg-brutal-yellow h-2 border-b-3 border-black"></div>
@@ -195,7 +142,7 @@
 				<div>
 					<h2 class="text-xl font-bold text-black">ACCOUNT & SUBSCRIPTION</h2>
 					<p class="text-sm text-black/60 font-medium mt-1">
-						Sign in to access Tasker Fast cloud models with a fixed monthly price (no token costs).
+						Sign in to access Tasker Fast cloud models with a fixed monthly price (no token costs). Best if you don't know what an API key is or want a fixed token cost.
 					</p>
 				</div>
 
@@ -257,9 +204,6 @@
 					{/if}
 				{:else}
 					<div class="border-3 border-black p-4 bg-white" style="box-shadow: 3px 3px 0 0 #000;">
-						<p class="text-black/70 mb-3">
-							Sign in to access Tasker Fast cloud model. Best if you don't know what an API key is or want a fixed token cost.
-						</p>
 						<button
 							onclick={() => (showLoginModal = true)}
 							class="btn-brutal bg-brutal-cyan text-black"
@@ -268,6 +212,59 @@
 						</button>
 					</div>
 				{/if}
+			</div>
+		</div>
+
+		<!-- API Keys Section -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-cyan h-2 border-b-3 border-black"></div>
+			<div class="p-6 space-y-6">
+				<div>
+					<h2 class="text-xl font-bold text-black">API KEYS</h2>
+					<p class="text-sm text-black/60 font-medium mt-1">
+						Enter API keys for the providers you want to use. Keys are stored locally.
+					</p>
+				</div>
+
+				<div class="space-y-4">
+					{#each apiKeyProviders as provider}
+						<div
+							class="border-3 border-black p-4 {hasKey(provider.id)
+								? 'bg-brutal-lime/20'
+								: 'bg-white'}"
+							style="box-shadow: 3px 3px 0 0 #000;"
+						>
+							<div class="flex items-center justify-between mb-2">
+								<div class="flex items-center gap-2">
+									<span class="font-bold text-black">{provider.name}</span>
+									{#if hasKey(provider.id)}
+										<svg
+											class="w-5 h-5 text-green-600"
+											fill="currentColor"
+											viewBox="0 0 20 20"
+										>
+											<path
+												fill-rule="evenodd"
+												d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+									{/if}
+								</div>
+								<span class="text-xs font-medium text-black/60">
+									{PROVIDER_MODELS[provider.id]?.length || 0} models
+								</span>
+							</div>
+
+							<input
+								type="password"
+								bind:value={apiKeys[provider.id as keyof ApiKeys]}
+								placeholder="Enter your {provider.name} API key"
+								class="input-brutal text-sm"
+							/>
+						</div>
+					{/each}
+				</div>
 			</div>
 		</div>
 
