@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod api;
 pub mod browser;
+pub mod desktop;
 pub mod config;
 pub mod error;
 pub mod llm;

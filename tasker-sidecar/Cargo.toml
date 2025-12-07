@@ -53,5 +53,29 @@ keyring = "3"
 # MIME type detection for file storage
 mime_guess = "2.0"
 
+# OS automation - cross-platform input simulation
+enigo = "0.2"
+
+# OS automation - cross-platform screenshots
+xcap = "0.0.14"
+
 [dev-dependencies]
 tokio-test = "0.4"
+
+# Platform-specific accessibility APIs
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_Accessibility",
+    "Win32_System_Com",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi"
+]}
+
+[target.'cfg(target_os = "macos")'.dependencies]
+accessibility = "0.1"
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = "0.21"
+zbus = "4.0"

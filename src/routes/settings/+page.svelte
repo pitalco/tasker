@@ -195,7 +195,7 @@
 				<div>
 					<h2 class="text-xl font-bold text-black">ACCOUNT & SUBSCRIPTION</h2>
 					<p class="text-sm text-black/60 font-medium mt-1">
-						Sign in to access Tasker Fast cloud models without API keys
+						Sign in to access Tasker Fast cloud models with a fixed monthly price (no token costs).
 					</p>
 				</div>
 
@@ -258,7 +258,7 @@
 				{:else}
 					<div class="border-3 border-black p-4 bg-white" style="box-shadow: 3px 3px 0 0 #000;">
 						<p class="text-black/70 mb-3">
-							Sign in to access Tasker Fast cloud model without managing API keys.
+							Sign in to access Tasker Fast cloud model. Best if you don't know what an API key is or want a fixed token cost.
 						</p>
 						<button
 							onclick={() => (showLoginModal = true)}
