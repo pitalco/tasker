@@ -137,6 +137,7 @@ pub async fn start_replay(
         api_key,
         max_steps: 50,
         headless: request.headless,
+        provider: Some(provider.to_string()),
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);

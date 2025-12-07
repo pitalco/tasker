@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod files;
 pub mod workflow;
 pub mod recording;

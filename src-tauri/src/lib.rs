@@ -4,13 +4,15 @@ mod sidecar;
 mod taskfile;
 
 use sidecar::SidecarManager;
-use tauri::RunEvent;
+use tauri::{Emitter, RunEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Initialize logging - always output to stdout in dev mode
             app.handle().plugin(
@@ -27,6 +29,19 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = db::init(&app_handle).await {
                     log::error!("Failed to initialize database: {}", e);
+                }
+            });
+
+            // Register deep link handler for auth callbacks
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                if let Some(url) = event.urls().first() {
+                    let url_str = url.to_string();
+                    log::info!("Received deep link: {}", url_str);
+                    // Emit to frontend for handling
+                    if let Err(e) = handle.emit("deep-link", url_str) {
+                        log::error!("Failed to emit deep link event: {}", e);
+                    }
                 }
             });
 
@@ -84,6 +99,15 @@ pub fn run() {
             commands::files::get_file_content,
             commands::files::delete_file,
             commands::files::download_file,
+            // Auth commands
+            commands::auth::store_auth_token,
+            commands::auth::get_auth_token,
+            commands::auth::clear_auth_token,
+            commands::auth::check_auth_status,
+            commands::auth::send_magic_link,
+            commands::auth::verify_magic_link,
+            commands::auth::open_checkout,
+            commands::auth::open_customer_portal,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

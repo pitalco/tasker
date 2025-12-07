@@ -44,3 +44,12 @@ regex-lite = "0.1"
 
 # File dialog
 tauri-plugin-dialog = "2"
+
+# Deep linking for auth callbacks
+tauri-plugin-deep-link = "2"
+
+# Secure credential storage
+keyring = "3"
+
+# Browser opening
+open = "5"

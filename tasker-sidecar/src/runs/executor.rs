@@ -9,6 +9,89 @@ use tokio::sync::RwLock;
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
+use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse, get_auth_token};
+
+/// Unified tool call representation that works with both genai and Railway
+#[derive(Debug, Clone)]
+pub struct UnifiedToolCall {
+    pub call_id: String,
+    pub fn_name: String,
+    pub fn_arguments: Value,
+}
+
+/// Response from LLM that can be either genai or Railway format
+enum LLMResponse {
+    Genai(genai::chat::ChatResponse),
+    Railway(RailwayChatResponse),
+}
+
+impl LLMResponse {
+    /// Extract tool calls from either response type
+    fn into_tool_calls(self) -> Vec<UnifiedToolCall> {
+        match self {
+            LLMResponse::Genai(res) => {
+                res.into_tool_calls()
+                    .into_iter()
+                    .map(|tc| UnifiedToolCall {
+                        call_id: tc.call_id,
+                        fn_name: tc.fn_name,
+                        fn_arguments: tc.fn_arguments,
+                    })
+                    .collect()
+            }
+            LLMResponse::Railway(res) => {
+                extract_railway_tool_calls(&res)
+            }
+        }
+    }
+}
+
+/// Extract tool calls from Railway response
+fn extract_railway_tool_calls(response: &RailwayChatResponse) -> Vec<UnifiedToolCall> {
+    let mut tool_calls = Vec::new();
+
+    if let Some(choice) = response.choices.first() {
+        if let Some(calls) = &choice.message.tool_calls {
+            for call in calls {
+                // OpenAI format: { "id": "...", "type": "function", "function": { "name": "...", "arguments": "..." } }
+                if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
+                    if let Some(func) = call.get("function") {
+                        let name = func.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        // Arguments come as a JSON string that needs parsing
+                        let arguments = func.get("arguments")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or(Value::Object(serde_json::Map::new()));
+
+                        tool_calls.push(UnifiedToolCall {
+                            call_id: id.to_string(),
+                            fn_name: name,
+                            fn_arguments: arguments,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    tool_calls
+}
+
+/// Convert UnifiedToolCall to genai ToolCall for chat history
+fn to_genai_tool_calls(tool_calls: &[UnifiedToolCall]) -> Vec<genai::chat::ToolCall> {
+    tool_calls
+        .iter()
+        .map(|tc| genai::chat::ToolCall {
+            call_id: tc.call_id.clone(),
+            fn_name: tc.fn_name.clone(),
+            fn_arguments: tc.fn_arguments.clone(),
+        })
+        .collect()
+}
 
 use super::logger::RunLogger;
 use super::models::{Run, RunStatus, RunStep};
@@ -24,6 +107,7 @@ pub struct ExecutorConfig {
     pub api_key: Option<String>,
     pub max_steps: usize,
     pub headless: bool,
+    pub provider: Option<String>,
 }
 
 impl Default for ExecutorConfig {
@@ -33,7 +117,20 @@ impl Default for ExecutorConfig {
             api_key: None,
             max_steps: MAX_STEPS,
             headless: false,
+            provider: None,
         }
+    }
+}
+
+impl ExecutorConfig {
+    /// Check if this config uses the Tasker Fast provider (Railway proxy)
+    pub fn uses_tasker_fast(&self) -> bool {
+        if let Some(ref provider) = self.provider {
+            let p = provider.to_lowercase();
+            return p == "tasker-fast" || p == "taskerfast" || p == "tasker";
+        }
+        // Also check model name for backwards compatibility
+        self.model.to_lowercase().contains("tasker-fast")
     }
 }
 
@@ -129,12 +226,34 @@ Keep taking actions until the condition above is clearly met.
             file_repository: Some(Arc::new(self.logger.repository().clone())),
         };
 
-        // Set up API key if provided
-        if let Some(ref api_key) = self.config.api_key {
-            std::env::set_var("ANTHROPIC_API_KEY", api_key);
-        }
+        // Check if using Tasker Fast (Railway proxy)
+        let uses_railway = self.config.uses_tasker_fast();
+        let railway_client = if uses_railway {
+            // Verify auth token exists for Tasker Fast
+            let auth_token = get_auth_token()
+                .map_err(|e| {
+                    let error = format!("Failed to get auth token: {}", e);
+                    self.logger.error(run_id, &error);
+                    anyhow!(error)
+                })?
+                .ok_or_else(|| {
+                    let error = "Not authenticated. Please sign in to use Tasker Fast.";
+                    self.logger.error(run_id, error);
+                    self.logger.status(run_id, RunStatus::Failed, Some(error.to_string()));
+                    anyhow!(error)
+                })?;
 
-        // Create genai client
+            self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
+            Some(RailwayClient::with_token(auth_token))
+        } else {
+            // Set up API key for genai providers
+            if let Some(ref api_key) = self.config.api_key {
+                unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
+            }
+            None
+        };
+
+        // Create genai client (for non-Railway providers)
         let client = Client::default();
 
         // Convert our tools to genai tools
@@ -142,7 +261,7 @@ Keep taking actions until the condition above is clearly met.
 
         // Build initial chat request with system prompt
         let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
-            .with_tools(tools);
+            .with_tools(tools.clone());
 
         // Add initial user message with task and screenshot
         let initial_message = self.build_user_message_with_screenshot(&user_prompt).await;
@@ -180,19 +299,33 @@ Keep taking actions until the condition above is clearly met.
 
             self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
 
-            // Call the model
-            let chat_res = match client.exec_chat(&self.config.model, chat_req.clone(), None).await {
-                Ok(res) => res,
-                Err(e) => {
-                    let error = format!("LLM request failed: {}", e);
-                    self.logger.error(run_id, &error);
-                    self.logger.status(run_id, RunStatus::Failed, Some(error));
-                    return Err(anyhow!("LLM request failed: {}", e));
+            // Call the model (using Railway for Tasker Fast, genai for others)
+            let llm_response: LLMResponse = if let Some(ref railway) = railway_client {
+                // Convert chat request to Railway format and call
+                match self.call_railway(railway, &chat_req, &tools).await {
+                    Ok(res) => LLMResponse::Railway(res),
+                    Err(e) => {
+                        let error = format!("LLM request failed: {}", e);
+                        self.logger.error(run_id, &error);
+                        self.logger.status(run_id, RunStatus::Failed, Some(error));
+                        return Err(e);
+                    }
+                }
+            } else {
+                // Use genai client
+                match client.exec_chat(&self.config.model, chat_req.clone(), None).await {
+                    Ok(res) => LLMResponse::Genai(res),
+                    Err(e) => {
+                        let error = format!("LLM request failed: {}", e);
+                        self.logger.error(run_id, &error);
+                        self.logger.status(run_id, RunStatus::Failed, Some(error));
+                        return Err(anyhow!("LLM request failed: {}", e));
+                    }
                 }
             };
 
             // Check for tool calls
-            let tool_calls = chat_res.into_tool_calls();
+            let tool_calls = llm_response.into_tool_calls();
 
             if tool_calls.is_empty() {
                 // No tool calls - model might have responded with text
@@ -306,7 +439,9 @@ Keep taking actions until the condition above is clearly met.
 
             // Append tool calls and responses to chat history
             // (Page state with screenshot will be added at START of next iteration)
-            chat_req = chat_req.append_message(tool_calls);
+            // Convert UnifiedToolCall back to genai format for chat history
+            let genai_tool_calls = to_genai_tool_calls(&tool_calls);
+            chat_req = chat_req.append_message(genai_tool_calls);
             for response in tool_responses {
                 chat_req = chat_req.append_message(response);
             }
@@ -343,6 +478,113 @@ Keep taking actions until the condition above is clearly met.
         }
 
         ChatMessage::user(parts)
+    }
+
+    /// Call Railway proxy with converted request format
+    async fn call_railway(
+        &self,
+        railway: &RailwayClient,
+        chat_req: &ChatRequest,
+        tools: &[Tool],
+    ) -> Result<RailwayChatResponse> {
+        // Convert genai messages to Railway format
+        let messages: Vec<RailwayMessage> = chat_req
+            .messages
+            .iter()
+            .map(|msg| {
+                let role = match msg.role {
+                    genai::chat::ChatRole::System => "system",
+                    genai::chat::ChatRole::User => "user",
+                    genai::chat::ChatRole::Assistant => "assistant",
+                    genai::chat::ChatRole::Tool => "tool",
+                };
+
+                // Convert content to JSON Value
+                let content = if msg.content.parts().len() == 1 {
+                    if let Some(text) = msg.content.parts()[0].as_text() {
+                        Value::String(text.to_string())
+                    } else {
+                        // Handle binary content (images)
+                        let parts: Vec<Value> = msg.content.parts().iter().map(|p| {
+                            if let Some(text) = p.as_text() {
+                                json!({"type": "text", "text": text})
+                            } else if let Some(binary) = p.as_binary() {
+                                // Extract base64 from BinarySource
+                                let base64_str = match &binary.source {
+                                    genai::chat::BinarySource::Base64(b64) => b64.to_string(),
+                                    genai::chat::BinarySource::Url(url) => url.clone(),
+                                };
+                                json!({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": format!("data:{};base64,{}", binary.content_type, base64_str)
+                                    }
+                                })
+                            } else {
+                                json!({"type": "text", "text": ""})
+                            }
+                        }).collect();
+                        Value::Array(parts)
+                    }
+                } else {
+                    // Multiple parts - create array content
+                    let parts: Vec<Value> = msg.content.parts().iter().map(|p| {
+                        if let Some(text) = p.as_text() {
+                            json!({"type": "text", "text": text})
+                        } else if let Some(binary) = p.as_binary() {
+                            // Extract base64 from BinarySource
+                            let base64_str = match &binary.source {
+                                genai::chat::BinarySource::Base64(b64) => b64.to_string(),
+                                genai::chat::BinarySource::Url(url) => url.clone(),
+                            };
+                            json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{};base64,{}", binary.content_type, base64_str)
+                                }
+                            })
+                        } else {
+                            json!({"type": "text", "text": ""})
+                        }
+                    }).collect();
+                    Value::Array(parts)
+                };
+
+                RailwayMessage {
+                    role: role.to_string(),
+                    content,
+                    tool_calls: None,
+                    tool_call_id: None,
+                }
+            })
+            .collect();
+
+        // Convert tools to OpenAI format
+        let tools_json: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.schema
+                    }
+                })
+            })
+            .collect();
+
+        let request = RailwayChatRequest {
+            messages,
+            max_tokens: Some(4096),
+            temperature: Some(0.7),
+            tools: if tools_json.is_empty() { None } else { Some(tools_json) },
+            tool_choice: if tools.is_empty() { None } else { Some(json!("auto")) },
+        };
+
+        // Make the call and return response directly
+        // Tool call extraction happens via extract_railway_tool_calls()
+        railway.chat(request).await
     }
 
     /// Build a follow-up message with current page state using UserMessageBuilder

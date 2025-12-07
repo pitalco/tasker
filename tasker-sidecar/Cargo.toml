@@ -44,6 +44,12 @@ urlencoding = "2.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5.0"
 
+# HTTP client for Railway proxy
+reqwest = { version = "0.12", features = ["json"] }
+
+# Secure credential storage (to read auth token)
+keyring = "3"
+
 # MIME type detection for file storage
 mime_guess = "2.0"
 
