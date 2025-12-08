@@ -484,7 +484,7 @@ Keep taking actions until the condition above is clearly met.
         chat_req: &ChatRequest,
         tools: &[Tool],
     ) -> Result<RailwayChatResponse> {
-        // Convert genai messages to Railway format
+        // Convert genai messages to Railway/OpenAI format
         let messages: Vec<RailwayMessage> = chat_req
             .messages
             .iter()
@@ -496,61 +496,80 @@ Keep taking actions until the condition above is clearly met.
                     genai::chat::ChatRole::Tool => "tool",
                 };
 
-                // Convert content to JSON Value
-                let content = if msg.content.parts().len() == 1 {
-                    if let Some(text) = msg.content.parts()[0].as_text() {
-                        Value::String(text.to_string())
-                    } else {
-                        // Handle binary content (images)
-                        let parts: Vec<Value> = msg.content.parts().iter().map(|p| {
-                            if let Some(text) = p.as_text() {
-                                json!({"type": "text", "text": text})
-                            } else if let Some(binary) = p.as_binary() {
-                                // Extract base64 from BinarySource
-                                let base64_str = match &binary.source {
-                                    genai::chat::BinarySource::Base64(b64) => b64.to_string(),
-                                    genai::chat::BinarySource::Url(url) => url.clone(),
-                                };
-                                json!({
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": format!("data:{};base64,{}", binary.content_type, base64_str)
-                                    }
-                                })
-                            } else {
-                                json!({"type": "text", "text": ""})
+                // Check for ToolResponse in content (for tool role messages)
+                if let Some(tool_response) = msg.content.parts().iter().find_map(|p| p.as_tool_response()) {
+                    // Tool response message - must have tool_call_id and string content
+                    return RailwayMessage {
+                        role: "tool".to_string(),
+                        content: Value::String(tool_response.content.clone()),
+                        tool_calls: None,
+                        tool_call_id: Some(tool_response.call_id.clone()),
+                    };
+                }
+
+                // Check for ToolCalls in content (for assistant role messages)
+                let tool_calls: Vec<&genai::chat::ToolCall> = msg.content.parts()
+                    .iter()
+                    .filter_map(|p| p.as_tool_call())
+                    .collect();
+
+                let tool_calls_json = if !tool_calls.is_empty() {
+                    Some(tool_calls.iter().map(|tc| {
+                        json!({
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.fn_name,
+                                "arguments": tc.fn_arguments.to_string()
                             }
-                        }).collect();
-                        Value::Array(parts)
+                        })
+                    }).collect::<Vec<Value>>())
+                } else {
+                    None
+                };
+
+                // Build content - exclude ToolCall/ToolResponse parts
+                let content_parts: Vec<Value> = msg.content.parts().iter().filter_map(|p| {
+                    if let Some(text) = p.as_text() {
+                        Some(json!({"type": "text", "text": text}))
+                    } else if let Some(binary) = p.as_binary() {
+                        let base64_str = match &binary.source {
+                            genai::chat::BinarySource::Base64(b64) => b64.to_string(),
+                            genai::chat::BinarySource::Url(url) => url.clone(),
+                        };
+                        Some(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", binary.content_type, base64_str)
+                            }
+                        }))
+                    } else {
+                        // Skip ToolCall and ToolResponse parts (handled separately)
+                        None
+                    }
+                }).collect();
+
+                // Determine final content format
+                let content = if content_parts.is_empty() {
+                    // Assistant message with only tool calls - content can be null
+                    Value::Null
+                } else if content_parts.len() == 1 {
+                    if let Some(text) = content_parts[0].get("text") {
+                        // Single text part - use string
+                        text.clone()
+                    } else {
+                        // Single non-text part - use array
+                        Value::Array(content_parts)
                     }
                 } else {
-                    // Multiple parts - create array content
-                    let parts: Vec<Value> = msg.content.parts().iter().map(|p| {
-                        if let Some(text) = p.as_text() {
-                            json!({"type": "text", "text": text})
-                        } else if let Some(binary) = p.as_binary() {
-                            // Extract base64 from BinarySource
-                            let base64_str = match &binary.source {
-                                genai::chat::BinarySource::Base64(b64) => b64.to_string(),
-                                genai::chat::BinarySource::Url(url) => url.clone(),
-                            };
-                            json!({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": format!("data:{};base64,{}", binary.content_type, base64_str)
-                                }
-                            })
-                        } else {
-                            json!({"type": "text", "text": ""})
-                        }
-                    }).collect();
-                    Value::Array(parts)
+                    // Multiple parts - use array
+                    Value::Array(content_parts)
                 };
 
                 RailwayMessage {
                     role: role.to_string(),
                     content,
-                    tool_calls: None,
+                    tool_calls: tool_calls_json,
                     tool_call_id: None,
                 }
             })
