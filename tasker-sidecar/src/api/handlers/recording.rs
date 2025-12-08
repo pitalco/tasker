@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::models::{
     RecordingSession, SessionStatusResponse, StartRecordingRequest, StartRecordingResponse,
-    StopRecordingResponse, Viewport,
+    StopRecordingRequest, StopRecordingResponse, Viewport,
 };
 use crate::recording::{AIEnhancer, BrowserRecorder};
 
@@ -132,6 +132,7 @@ pub async fn start_recording(
 pub async fn stop_recording(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    body: Option<Json<StopRecordingRequest>>,
 ) -> Result<Json<StopRecordingResponse>, (StatusCode, String)> {
     let (_, active) = state
         .recordings
@@ -140,6 +141,9 @@ pub async fn stop_recording(
 
     // Get the start URL before stopping
     let start_url = active.session.start_url.clone();
+
+    // Extract auth_token from request body if present
+    let auth_token = body.and_then(|b| b.auth_token.clone());
 
     // Stop recording and get workflow
     let workflow = active.recorder.stop().await.map_err(|e| {
@@ -155,17 +159,27 @@ pub async fn stop_recording(
 
     // Generate comprehensive task description from all steps
     let (name, task_description) = if !workflow.steps.is_empty() {
-        let enhancer = AIEnhancer::new(None); // Use default model
-        match enhancer.generate_task_description(&workflow.steps, &start_url).await {
-            Ok(result) => {
-                tracing::info!("Task generated for session {}: '{}'", session_id, result.name);
-                (result.name, result.description)
+        match AIEnhancer::new(auth_token) {
+            Some(enhancer) => {
+                match enhancer.generate_task_description(&workflow.steps, &start_url).await {
+                    Ok(result) => {
+                        tracing::info!("Task generated for session {}: '{}'", session_id, result.name);
+                        (result.name, result.description)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Task description generation failed for session {}: {}", session_id, e);
+                        (
+                            "Recorded Workflow".to_string(),
+                            format!("Failed to generate task description: {}", e),
+                        )
+                    }
+                }
             }
-            Err(e) => {
-                tracing::warn!("Task description generation failed for session {}: {}", session_id, e);
+            None => {
+                tracing::warn!("AI enhancer unavailable - no API key configured for default provider");
                 (
                     "Recorded Workflow".to_string(),
-                    format!("Failed to generate task description: {}", e),
+                    "AI task description unavailable. Please configure an API key in settings or use Tasker Fast.".to_string(),
                 )
             }
         }

@@ -35,9 +35,7 @@ impl Default for Config {
 #[derive(Debug, Deserialize)]
 struct LLMConfig {
     api_keys: ApiKeys,
-    #[allow(dead_code)]
     default_provider: Option<String>,
-    #[allow(dead_code)]
     default_model: Option<String>,
 }
 
@@ -103,4 +101,74 @@ pub fn get_api_key(provider: &str) -> Option<String> {
             None
         }
     }
+}
+
+/// Get the default LLM provider from settings
+pub fn get_default_provider() -> Option<String> {
+    let db_path = get_db_path()?;
+
+    let conn = match Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to open settings database: {}", e);
+            return None;
+        }
+    };
+
+    let llm_config_json: String = match conn.query_row(
+        "SELECT llm_config_json FROM app_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Failed to query settings: {}", e);
+            return None;
+        }
+    };
+
+    let config: LLMConfig = match serde_json::from_str(&llm_config_json) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to parse LLM config: {}", e);
+            return None;
+        }
+    };
+
+    config.default_provider
+}
+
+/// Get the default LLM model from settings
+pub fn get_default_model() -> Option<String> {
+    let db_path = get_db_path()?;
+
+    let conn = match Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to open settings database: {}", e);
+            return None;
+        }
+    };
+
+    let llm_config_json: String = match conn.query_row(
+        "SELECT llm_config_json FROM app_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Failed to query settings: {}", e);
+            return None;
+        }
+    };
+
+    let config: LLMConfig = match serde_json::from_str(&llm_config_json) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to parse LLM config: {}", e);
+            return None;
+        }
+    };
+
+    config.default_model
 }

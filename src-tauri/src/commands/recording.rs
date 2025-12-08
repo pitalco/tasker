@@ -94,7 +94,7 @@ pub async fn start_recording(request: StartRecordingRequest) -> Result<Recording
 }
 
 #[tauri::command]
-pub async fn stop_recording(session_id: String) -> Result<serde_json::Value, String> {
+pub async fn stop_recording(session_id: String, auth_token: Option<String>) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let url = format!(
         "{}/recording/{}/stop",
@@ -102,8 +102,14 @@ pub async fn stop_recording(session_id: String) -> Result<serde_json::Value, Str
         session_id
     );
 
+    // Build request body with auth_token if provided
+    let body = serde_json::json!({
+        "auth_token": auth_token,
+    });
+
     let response = client
         .post(&url)
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("Failed to stop recording: {}", e))?;

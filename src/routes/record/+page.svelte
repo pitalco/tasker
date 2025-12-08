@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { getWorkflowState } from '$lib/stores/workflow.svelte';
 	import {
 		startSidecar,
@@ -11,6 +11,8 @@
 		getWebSocket,
 		type SidecarWebSocket
 	} from '$lib/services/sidecarService';
+	import { getAuthToken, checkAuthStatus } from '$lib/services/authService';
+	import { getSettings } from '$lib/services/settingsService';
 	import type { WorkflowStep } from '$lib/types/workflow';
 
 	const workflowState = getWorkflowState();
@@ -24,6 +26,53 @@
 	let isStarting = $state(false);
 	let loadingMessage = $state('Initializing...');
 	let ws: SidecarWebSocket | null = null;
+
+	// Settings validation
+	let isCheckingSettings = $state(true);
+	let settingsConfigured = $state(false);
+	let settingsError = $state<string | null>(null);
+
+	// Check if AI settings are properly configured
+	onMount(async () => {
+		try {
+			const settings = await getSettings();
+			const provider = settings.llm_config.default_provider;
+			const model = settings.llm_config.default_model;
+
+			if (!provider || !model) {
+				settingsError = 'Please configure a default AI provider and model in Settings before recording.';
+				settingsConfigured = false;
+			} else if (provider === 'tasker-fast') {
+				// Check if user has subscription for Tasker Fast
+				const auth = await checkAuthStatus();
+				if (!auth.has_subscription) {
+					settingsError = 'Tasker Fast requires an active subscription. Subscribe or configure an API key in Settings.';
+					settingsConfigured = false;
+				} else {
+					settingsConfigured = true;
+				}
+			} else {
+				// Check if API key is configured for the provider
+				const apiKeys = settings.llm_config.api_keys;
+				const hasKey =
+					(provider === 'gemini' && apiKeys.gemini) ||
+					(provider === 'openai' && apiKeys.openai) ||
+					(provider === 'anthropic' && apiKeys.anthropic);
+
+				if (!hasKey) {
+					settingsError = `No API key configured for ${provider}. Please add your API key in Settings.`;
+					settingsConfigured = false;
+				} else {
+					settingsConfigured = true;
+				}
+			}
+		} catch (e) {
+			settingsError = 'Unable to load settings. Please check your configuration.';
+			settingsConfigured = false;
+		} finally {
+			isCheckingSettings = false;
+		}
+	});
 
 	// Handle step events from WebSocket
 	function handleStepEvent(data: unknown) {
@@ -115,8 +164,19 @@
 		isSaving = true;
 
 		try {
+			// Get auth token if using Tasker Fast provider
+			let authToken: string | undefined;
+			try {
+				const settings = await getSettings();
+				if (settings.llm_config.default_provider === 'tasker-fast') {
+					authToken = (await getAuthToken()) ?? undefined;
+				}
+			} catch {
+				// If settings unavailable, continue without auth token
+			}
+
 			// Stop recording and generate task description via AI
-			const response = await stopRecording(sessionId);
+			const response = await stopRecording(sessionId, authToken);
 
 			// Disconnect WebSocket
 			ws?.disconnect();
@@ -193,33 +253,57 @@
 				<p>Record your browser actions to create an automation</p>
 			</div>
 
-			<div class="card">
-				<div class="info-box">
-					<h3>HOW IT WORKS</h3>
-					<ol>
-						<li><span class="num">1</span> Chrome opens with a blank tab</li>
-						<li><span class="num">2</span> Navigate to any site and perform your actions</li>
-						<li><span class="num">3</span> Click "Stop & Save" when done</li>
-						<li><span class="num">4</span> Your workflow is saved automatically</li>
-					</ol>
-				</div>
-
-				<button
-					onclick={handleStartRecording}
-					disabled={isStarting}
-					class="start-btn"
-				>
-					{#if isStarting}
+			{#if isCheckingSettings}
+				<div class="card">
+					<div class="checking-settings">
 						<span class="spinner"></span>
-						{loadingMessage.toUpperCase()}
-					{:else}
-						<svg viewBox="0 0 20 20" fill="currentColor" width="24" height="24">
-							<circle cx="10" cy="10" r="6" />
+						<p>Checking configuration...</p>
+					</div>
+				</div>
+			{:else if settingsError}
+				<div class="card">
+					<div class="settings-error">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+							<circle cx="12" cy="12" r="10"/>
+							<line x1="12" y1="8" x2="12" y2="12"/>
+							<line x1="12" y1="16" x2="12.01" y2="16"/>
 						</svg>
-						START RECORDING
+						<h3>CONFIGURATION REQUIRED</h3>
+						<p>{settingsError}</p>
+						<button onclick={() => goto('/settings')} class="settings-btn">
+							GO TO SETTINGS
+						</button>
+					</div>
+				</div>
+			{:else}
+				<div class="card">
+					<div class="info-box">
+						<h3>HOW IT WORKS</h3>
+						<ol>
+							<li><span class="num">1</span> Chrome opens with a blank tab</li>
+							<li><span class="num">2</span> Navigate to any site and perform your actions</li>
+							<li><span class="num">3</span> Click "Stop & Save" when done</li>
+							<li><span class="num">4</span> Your workflow is saved automatically</li>
+						</ol>
+					</div>
+
+					<button
+						onclick={handleStartRecording}
+						disabled={isStarting}
+						class="start-btn"
+					>
+						{#if isStarting}
+							<span class="spinner"></span>
+							{loadingMessage.toUpperCase()}
+						{:else}
+							<svg viewBox="0 0 20 20" fill="currentColor" width="24" height="24">
+								<circle cx="10" cy="10" r="6" />
+							</svg>
+							START RECORDING
 					{/if}
 				</button>
 			</div>
+			{/if}
 		</div>
 	{:else}
 		<div class="recording-screen">
@@ -345,6 +429,63 @@
 		border: 3px solid #000;
 		padding: 24px;
 		box-shadow: 6px 6px 0 0 #000;
+	}
+
+	.checking-settings {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 16px;
+		padding: 32px;
+	}
+
+	.checking-settings p {
+		margin: 0;
+		color: rgba(0, 0, 0, 0.6);
+		font-weight: 500;
+	}
+
+	.settings-error {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 12px;
+		padding: 24px;
+	}
+
+	.settings-error svg {
+		color: var(--brutal-magenta, #ff6b9d);
+	}
+
+	.settings-error h3 {
+		margin: 0;
+		font-size: 1.25rem;
+		font-weight: bold;
+	}
+
+	.settings-error p {
+		margin: 0;
+		color: rgba(0, 0, 0, 0.7);
+		max-width: 400px;
+	}
+
+	.settings-btn {
+		margin-top: 8px;
+		padding: 12px 24px;
+		background: var(--brutal-cyan, #00d4ff);
+		border: 3px solid #000;
+		font-weight: bold;
+		cursor: pointer;
+		box-shadow: 4px 4px 0 0 #000;
+		transition:
+			transform 0.1s,
+			box-shadow 0.1s;
+	}
+
+	.settings-btn:hover {
+		transform: translate(2px, 2px);
+		box-shadow: 2px 2px 0 0 #000;
 	}
 
 	.info-box {

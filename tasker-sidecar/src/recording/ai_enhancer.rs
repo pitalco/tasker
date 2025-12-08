@@ -4,12 +4,12 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart};
 use genai::Client;
+use serde_json::{json, Value};
 
 use crate::config;
+use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage};
 use crate::models::WorkflowStep;
 
-/// Default model for AI enhancement (vision-capable)
-const DEFAULT_ENHANCEMENT_MODEL: &str = "gemini-2.5-flash";
 
 /// Result of task description generation
 #[derive(Debug)]
@@ -18,41 +18,76 @@ pub struct TaskDescriptionResult {
     pub description: String,
 }
 
+/// Provider type for AI enhancement
+enum EnhancerProvider {
+    /// Use genai Client with API key
+    Genai { client: Client, model: String },
+    /// Use Tasker Fast via Railway proxy
+    TaskerFast { client: RailwayClient },
+}
+
 /// AI enhancement service for recorded workflows
 pub struct AIEnhancer {
-    client: Client,
-    model: String,
+    provider: EnhancerProvider,
 }
 
 impl AIEnhancer {
-    pub fn new(model: Option<&str>) -> Self {
-        let model_name = model.unwrap_or(DEFAULT_ENHANCEMENT_MODEL);
+    /// Create a new AI enhancer
+    /// - auth_token: Required for Tasker Fast provider
+    pub fn new(auth_token: Option<String>) -> Option<Self> {
+        // Check default provider from settings
+        let default_provider = config::get_default_provider()
+            .unwrap_or_else(|| "gemini".to_string());
 
-        // Determine provider from model name and load API key from app settings
-        let provider = if model_name.starts_with("gemini") {
-            "gemini"
-        } else if model_name.starts_with("gpt") {
-            "openai"
-        } else if model_name.starts_with("claude") {
-            "anthropic"
+        tracing::info!("AI enhancer using provider: {}", default_provider);
+
+        if default_provider == "tasker-fast" {
+            // Use Tasker Fast - requires auth token
+            let auth_token = auth_token?;
+            tracing::info!("Using Tasker Fast for AI enhancement");
+            Some(Self {
+                provider: EnhancerProvider::TaskerFast {
+                    client: RailwayClient::with_token(auth_token),
+                },
+            })
         } else {
-            "gemini" // Default to gemini
-        };
+            // Get model from settings - required, no fallbacks
+            let model_name = config::get_default_model();
+            if model_name.is_none() {
+                tracing::warn!("No default model configured in settings");
+                return None;
+            }
+            let model_name = model_name.unwrap();
 
-        // Load API key from app settings database
-        if let Some(api_key) = config::get_api_key(provider) {
-            let env_var = match provider {
-                "anthropic" => "ANTHROPIC_API_KEY",
-                "openai" => "OPENAI_API_KEY",
-                _ => "GEMINI_API_KEY",
+            // Determine provider from the configured default
+            let (provider_name, env_var) = if default_provider.starts_with("claude") || default_provider == "anthropic" {
+                ("anthropic", "ANTHROPIC_API_KEY")
+            } else if default_provider.starts_with("gpt") || default_provider == "openai" {
+                ("openai", "OPENAI_API_KEY")
+            } else if default_provider.starts_with("gemini") || default_provider == "google" {
+                ("gemini", "GEMINI_API_KEY")
+            } else {
+                tracing::warn!("Unknown provider: {} - configure a valid provider in settings", default_provider);
+                return None;
             };
-            std::env::set_var(env_var, api_key);
-            tracing::debug!("Loaded {} API key from app settings", provider);
-        }
 
-        Self {
-            client: Client::default(),
-            model: model_name.to_string(),
+            // Load API key from app settings database
+            let api_key = config::get_api_key(provider_name);
+            if api_key.is_none() {
+                tracing::warn!("No API key found for {} - configure it in settings", provider_name);
+                return None;
+            }
+
+            let api_key = api_key.unwrap();
+            unsafe { std::env::set_var(env_var, api_key) };
+            tracing::info!("Using {} model {} for AI enhancement", provider_name, model_name);
+
+            Some(Self {
+                provider: EnhancerProvider::Genai {
+                    client: Client::default(),
+                    model: model_name,
+                },
+            })
         }
     }
 
@@ -71,6 +106,31 @@ impl AIEnhancer {
 
         tracing::info!("Generating task description from {} steps", steps.len());
 
+        let response_text = match &self.provider {
+            EnhancerProvider::Genai { client, model } => {
+                self.generate_with_genai(client, model, steps, start_url).await?
+            }
+            EnhancerProvider::TaskerFast { client } => {
+                self.generate_with_tasker_fast(client, steps, start_url).await?
+            }
+        };
+
+        // Parse name and description from response
+        let result = Self::parse_response(&response_text);
+
+        tracing::info!("Generated task: '{}' ({} chars)", result.name, result.description.len());
+
+        Ok(result)
+    }
+
+    /// Generate task description using genai client (Gemini/OpenAI/Anthropic)
+    async fn generate_with_genai(
+        &self,
+        client: &Client,
+        model: &str,
+        steps: &[WorkflowStep],
+        start_url: &str,
+    ) -> Result<String> {
         let mut parts = vec![ContentPart::from_text(TASK_DESCRIPTION_PROMPT.to_string())];
 
         // Add start URL context
@@ -124,24 +184,115 @@ impl AIEnhancer {
 
         // Make API request
         let request = ChatRequest::new(vec![ChatMessage::user(parts)]);
-        let response = self
-            .client
-            .exec_chat(&self.model, request, None)
+        let response = client
+            .exec_chat(model, request, None)
             .await
             .map_err(|e| anyhow!("AI task description generation failed: {}", e))?;
 
-        // Extract the response text
-        let response_text = response
+        Ok(response
             .first_text()
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "Failed to generate task description.".to_string());
+            .unwrap_or_else(|| "Failed to generate task description.".to_string()))
+    }
 
-        // Parse name and description from response
-        let result = Self::parse_response(&response_text);
+    /// Generate task description using Tasker Fast (Railway proxy)
+    async fn generate_with_tasker_fast(
+        &self,
+        client: &RailwayClient,
+        steps: &[WorkflowStep],
+        start_url: &str,
+    ) -> Result<String> {
+        // Build multimodal content array in OpenAI format
+        let mut content_parts: Vec<Value> = vec![];
 
-        tracing::info!("Generated task: '{}' ({} chars)", result.name, result.description.len());
+        // Add prompt
+        content_parts.push(json!({
+            "type": "text",
+            "text": TASK_DESCRIPTION_PROMPT
+        }));
 
-        Ok(result)
+        // Add start URL context
+        content_parts.push(json!({
+            "type": "text",
+            "text": format!(
+                "\n\n=== RECORDING SESSION ===\nStart URL: {}\nTotal Steps: {}\n",
+                start_url,
+                steps.len()
+            )
+        }));
+
+        // Build context for each step with screenshots
+        for (i, step) in steps.iter().enumerate() {
+            let step_num = i + 1;
+
+            // Add step context as text
+            let step_context = format!(
+                "\n\n--- Step {} of {} ---\nAction: {:?}\nSelector: {:?}\nValue: {:?}",
+                step_num,
+                steps.len(),
+                step.action.action_type,
+                step.action.selector.as_ref().map(|s| format!("{:?}: {}", s.strategy, s.value)),
+                step.action.value
+            );
+            content_parts.push(json!({
+                "type": "text",
+                "text": step_context
+            }));
+
+            // Add before screenshot if available
+            if let Some(ref before) = step.screenshot_before {
+                content_parts.push(json!({
+                    "type": "text",
+                    "text": format!("\nStep {} BEFORE screenshot:", step_num)
+                }));
+                content_parts.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:image/png;base64,{}", before)
+                    }
+                }));
+            }
+
+            // Add after screenshot if available
+            if let Some(ref after) = step.screenshot_after {
+                content_parts.push(json!({
+                    "type": "text",
+                    "text": format!("\nStep {} AFTER screenshot:", step_num)
+                }));
+                content_parts.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:image/png;base64,{}", after)
+                    }
+                }));
+            }
+        }
+
+        // Create request
+        let request = RailwayChatRequest {
+            messages: vec![RailwayMessage {
+                role: "user".to_string(),
+                content: Value::Array(content_parts),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            max_tokens: Some(4096),
+            temperature: Some(0.7),
+            tools: None,
+            tool_choice: None,
+        };
+
+        let response = client
+            .chat(request)
+            .await
+            .map_err(|e| anyhow!("AI task description generation failed: {}", e))?;
+
+        response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("No text in response"))
     }
 
     /// Parse the AI response to extract name and description

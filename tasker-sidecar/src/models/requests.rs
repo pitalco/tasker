@@ -47,3 +47,10 @@ pub struct StartReplayRequest {
 fn default_iterations() -> i32 {
     1
 }
+
+/// Request to stop a recording session and generate task description
+#[derive(Debug, Deserialize, Default)]
+pub struct StopRecordingRequest {
+    /// Auth token for Tasker Fast (subscription-based model)
+    pub auth_token: Option<String>,
+}
