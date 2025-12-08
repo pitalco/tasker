@@ -13,10 +13,13 @@ jobs:
         include:
           - platform: windows-latest
             args: ''
+            rust_target: x86_64-pc-windows-msvc
           - platform: macos-latest
             args: '--target universal-apple-darwin'
+            rust_target: universal-apple-darwin
           - platform: ubuntu-22.04
             args: ''
+            rust_target: x86_64-unknown-linux-gnu
 
     runs-on: ${{ matrix.platform }}
 
@@ -43,6 +46,33 @@ jobs:
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
+
+      # Build sidecar for Windows
+      - name: Build sidecar (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd tasker-sidecar
+          cargo build --release
+          copy target\release\tasker-sidecar.exe target\release\tasker-sidecar-x86_64-pc-windows-msvc.exe
+        shell: cmd
+
+      # Build sidecar for Linux
+      - name: Build sidecar (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          cd tasker-sidecar
+          cargo build --release
+          cp target/release/tasker-sidecar target/release/tasker-sidecar-x86_64-unknown-linux-gnu
+
+      # Build sidecar for macOS (both architectures for universal binary)
+      - name: Build sidecar (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          cd tasker-sidecar
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          cp target/aarch64-apple-darwin/release/tasker-sidecar target/release/tasker-sidecar-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/tasker-sidecar target/release/tasker-sidecar-x86_64-apple-darwin
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
