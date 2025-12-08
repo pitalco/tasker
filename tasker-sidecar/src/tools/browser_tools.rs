@@ -347,13 +347,13 @@ impl Tool for SendKeysTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "send_keys".to_string(),
-            description: "Send keyboard keys like Enter, Tab, Escape, or key combinations".to_string(),
+            description: "Send keyboard keys like Enter, Tab, Escape, arrow keys, etc.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "keys": {
                         "type": "string",
-                        "description": "Keys to send (e.g., 'Enter', 'Tab', 'Escape', 'Control+a')"
+                        "description": "Key to send: 'Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Home', 'End', 'PageUp', 'PageDown'"
                     }
                 },
                 "required": ["keys"]
@@ -366,30 +366,11 @@ impl Tool for SendKeysTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'keys' parameter"))?;
 
-        // Map common key names to their JS keycode
-        let script = format!(
-            r#"(function() {{
-            const keyMap = {{
-                'Enter': {{ key: 'Enter', code: 'Enter', keyCode: 13 }},
-                'Tab': {{ key: 'Tab', code: 'Tab', keyCode: 9 }},
-                'Escape': {{ key: 'Escape', code: 'Escape', keyCode: 27 }},
-                'Backspace': {{ key: 'Backspace', code: 'Backspace', keyCode: 8 }},
-                'Delete': {{ key: 'Delete', code: 'Delete', keyCode: 46 }},
-                'ArrowUp': {{ key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 }},
-                'ArrowDown': {{ key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 }},
-                'ArrowLeft': {{ key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }},
-                'ArrowRight': {{ key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 }},
-            }};
-            const keyInfo = keyMap['{}'] || {{ key: '{}', code: 'Key' + '{}', keyCode: '{}'.charCodeAt(0) }};
-            document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{ ...keyInfo, bubbles: true }}));
-            document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {{ ...keyInfo, bubbles: true }}));
-            return 'sent';
-            }})()"#,
-            keys, keys, keys, keys
-        );
-
-        ctx.browser.evaluate(&script).await?;
-        Ok(ToolResult::success(format!("Sent keys: {}", keys)))
+        // Use CDP-based key press for reliable keyboard input
+        match ctx.browser.press_key(keys).await {
+            Ok(()) => Ok(ToolResult::success(format!("Pressed key: {}", keys))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to press key '{}': {}", keys, e)))
+        }
     }
 }
 

@@ -6,6 +6,7 @@ use chromiumoxide::cdp::browser_protocol::dom::{
     ScrollIntoViewIfNeededParams,
 };
 use chromiumoxide::cdp::browser_protocol::input::{
+    DispatchKeyEventParams, DispatchKeyEventType,
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 use chromiumoxide::cdp::browser_protocol::page::{AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat, EventFrameNavigated};
@@ -229,15 +230,34 @@ impl BrowserManager {
         Ok(())
     }
 
-    /// Scroll the page
+    /// Scroll the page using CDP mouse wheel events (more reliable than JS)
     pub async fn scroll(&self, x: i32, y: i32) -> Result<()> {
         let page_guard = self.page.lock().await;
         let page = page_guard
             .as_ref()
             .ok_or_else(|| anyhow!("No page available"))?;
 
-        page.evaluate(format!("window.scrollBy({}, {})", x, y))
-            .await
+        // Use CDP Input.dispatchMouseEvent with mouseWheel type
+        let scroll_event = DispatchMouseEventParams {
+            r#type: DispatchMouseEventType::MouseWheel,
+            x: 400.0,  // Center of viewport
+            y: 300.0,
+            button: None,
+            click_count: None,
+            modifiers: None,
+            timestamp: None,
+            delta_x: Some(x as f64),
+            delta_y: Some(y as f64),
+            pointer_type: None,
+            buttons: None,
+            tangential_pressure: None,
+            tilt_x: None,
+            tilt_y: None,
+            twist: None,
+            force: None,
+        };
+
+        page.execute(scroll_event).await
             .map_err(|e| anyhow!("Failed to scroll: {}", e))?;
 
         Ok(())
@@ -427,6 +447,73 @@ impl BrowserManager {
 
         page.execute(params).await
             .map_err(|e| anyhow!("Failed to type text: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Press a key using CDP Input.dispatchKeyEvent (more reliable than JS events)
+    pub async fn press_key(&self, key: &str) -> Result<()> {
+        let page_guard = self.page.lock().await;
+        let page = page_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No page available"))?;
+
+        // Map key names to CDP key codes and text
+        let (key_code, code, text, key_name) = match key.to_lowercase().as_str() {
+            "enter" | "return" => (13, "Enter", "\r", "Enter"),
+            "tab" => (9, "Tab", "", "Tab"),
+            "escape" | "esc" => (27, "Escape", "", "Escape"),
+            "backspace" => (8, "Backspace", "", "Backspace"),
+            "delete" => (46, "Delete", "", "Delete"),
+            "arrowup" | "up" => (38, "ArrowUp", "", "ArrowUp"),
+            "arrowdown" | "down" => (40, "ArrowDown", "", "ArrowDown"),
+            "arrowleft" | "left" => (37, "ArrowLeft", "", "ArrowLeft"),
+            "arrowright" | "right" => (39, "ArrowRight", "", "ArrowRight"),
+            "space" => (32, "Space", " ", " "),
+            "home" => (36, "Home", "", "Home"),
+            "end" => (35, "End", "", "End"),
+            "pageup" => (33, "PageUp", "", "PageUp"),
+            "pagedown" => (34, "PageDown", "", "PageDown"),
+            _ => {
+                // For single characters, use their char code
+                if key.len() == 1 {
+                    let c = key.chars().next().unwrap();
+                    (c as i64, &format!("Key{}", c.to_uppercase())[..], key, key)
+                } else {
+                    return Err(anyhow!("Unknown key: {}", key));
+                }
+            }
+        };
+
+        // Key down event
+        let key_down = DispatchKeyEventParams::builder()
+            .r#type(DispatchKeyEventType::KeyDown)
+            .key(key_name)
+            .code(code)
+            .windows_virtual_key_code(key_code)
+            .native_virtual_key_code(key_code);
+
+        let key_down = if !text.is_empty() {
+            key_down.text(text).build()
+        } else {
+            key_down.build()
+        }.map_err(|e| anyhow!("Failed to build key down params: {}", e))?;
+
+        page.execute(key_down).await
+            .map_err(|e| anyhow!("Failed to dispatch key down: {}", e))?;
+
+        // Key up event
+        let key_up = DispatchKeyEventParams::builder()
+            .r#type(DispatchKeyEventType::KeyUp)
+            .key(key_name)
+            .code(code)
+            .windows_virtual_key_code(key_code)
+            .native_virtual_key_code(key_code)
+            .build()
+            .map_err(|e| anyhow!("Failed to build key up params: {}", e))?;
+
+        page.execute(key_up).await
+            .map_err(|e| anyhow!("Failed to dispatch key up: {}", e))?;
 
         Ok(())
     }
