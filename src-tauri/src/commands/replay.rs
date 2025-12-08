@@ -85,11 +85,17 @@ pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse,
                 .iter()
                 .filter_map(|v| {
                     let name = v.get("name")?.as_str()?;
-                    let default = v.get("default_value").cloned().unwrap_or(serde_json::Value::Null);
+                    let default = v
+                        .get("default_value")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     Some((name.to_string(), default))
                 })
                 .collect();
-            obj.insert("variables".to_string(), serde_json::to_value(vars_map).unwrap());
+            obj.insert(
+                "variables".to_string(),
+                serde_json::to_value(vars_map).unwrap(),
+            );
         }
     }
 

@@ -1,5 +1,5 @@
-mod db;
 mod commands;
+mod db;
 mod sidecar;
 mod taskfile;
 
@@ -13,6 +13,7 @@ pub fn run() {
     let _ = dotenvy::dotenv();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -40,7 +41,6 @@ pub fn run() {
             app.deep_link().on_open_url(move |event| {
                 if let Some(url) = event.urls().first() {
                     let url_str = url.to_string();
-                    log::info!("Received deep link: {}", url_str);
                     // Emit to frontend for handling
                     if let Err(e) = handle.emit("deep-link", url_str) {
                         log::error!("Failed to emit deep link event: {}", e);
@@ -117,10 +117,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             if let RunEvent::Exit = event {
-                log::info!("App exiting, stopping sidecar...");
-                if let Err(e) = SidecarManager::stop() {
-                    log::error!("Failed to stop sidecar on exit: {}", e);
-                }
+                let _ = SidecarManager::stop();
             }
         });
 }

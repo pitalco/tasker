@@ -41,7 +41,10 @@ impl EnvResolver {
         // Resolve {{variable}} patterns (workflow variables)
         result = self.resolve_workflow_vars(&result, &mut unresolved);
 
-        ResolveResult { value: result, unresolved }
+        ResolveResult {
+            value: result,
+            unresolved,
+        }
     }
 
     /// Resolve only environment variable references

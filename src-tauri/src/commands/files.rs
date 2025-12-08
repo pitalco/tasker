@@ -42,7 +42,10 @@ pub struct FileContentResponse {
 
 /// List all files with pagination
 #[tauri::command]
-pub async fn get_all_files(limit: Option<i64>, offset: Option<i64>) -> Result<FileListResponse, String> {
+pub async fn get_all_files(
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<FileListResponse, String> {
     let client = reqwest::Client::new();
     let mut url = format!("{}/files", SidecarManager::base_url());
 
@@ -178,7 +181,8 @@ pub async fn download_file(
         .map_err(|e| format!("Failed to read file content: {}", e))?;
 
     // Show save dialog
-    let file_path = app.dialog()
+    let file_path = app
+        .dialog()
         .file()
         .set_file_name(&suggested_name)
         .blocking_save_file();

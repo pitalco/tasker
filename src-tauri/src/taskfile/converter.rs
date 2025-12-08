@@ -9,9 +9,10 @@ pub fn taskfile_to_workflow(taskfile: &Taskfile) -> WorkflowDto {
         .enumerate()
         .map(|(i, step)| {
             let action = taskfile_action_to_json(&step.action);
-            let name = step.description.clone().unwrap_or_else(|| {
-                action_to_name(&step.action)
-            });
+            let name = step
+                .description
+                .clone()
+                .unwrap_or_else(|| action_to_name(&step.action));
             WorkflowStep {
                 id: step.id.clone(),
                 order: i as i32,
@@ -141,14 +142,14 @@ fn action_to_name(action: &TaskfileAction) -> String {
         TaskfileAction::Type { text, .. } => {
             format!("Type '{}'", truncate_string(text, 30))
         }
-        TaskfileAction::Wait { condition } => {
-            match condition {
-                WaitCondition::Delay { ms } => format!("Wait {}ms", ms),
-                WaitCondition::UrlMatch { value, .. } => format!("Wait for URL: {}", truncate_string(value, 30)),
-                WaitCondition::ElementVisible { .. } => "Wait for element visible".to_string(),
-                WaitCondition::ElementHidden { .. } => "Wait for element hidden".to_string(),
+        TaskfileAction::Wait { condition } => match condition {
+            WaitCondition::Delay { ms } => format!("Wait {}ms", ms),
+            WaitCondition::UrlMatch { value, .. } => {
+                format!("Wait for URL: {}", truncate_string(value, 30))
             }
-        }
+            WaitCondition::ElementVisible { .. } => "Wait for element visible".to_string(),
+            WaitCondition::ElementHidden { .. } => "Wait for element hidden".to_string(),
+        },
         TaskfileAction::Extract { variable, .. } => {
             format!("Extract to '{}'", variable)
         }
@@ -343,7 +344,10 @@ fn json_to_taskfile_action(json: &serde_json::Value) -> TaskfileAction {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            clear_first: json.get("clear_first").and_then(|v| v.as_bool()).unwrap_or(false),
+            clear_first: json
+                .get("clear_first")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         },
         "wait" => {
             let condition = json.get("condition");
@@ -385,7 +389,9 @@ fn json_to_taskfile_action(json: &serde_json::Value) -> TaskfileAction {
                         .unwrap_or(1000) as u32,
                 },
             };
-            TaskfileAction::Wait { condition: wait_cond }
+            TaskfileAction::Wait {
+                condition: wait_cond,
+            }
         }
         "extract" => TaskfileAction::Extract {
             selector: json_to_selector(json.get("selector")),
@@ -401,8 +407,14 @@ fn json_to_taskfile_action(json: &serde_json::Value) -> TaskfileAction {
                 .to_string(),
         },
         "screenshot" => TaskfileAction::Screenshot {
-            full_page: json.get("full_page").and_then(|v| v.as_bool()).unwrap_or(false),
-            variable: json.get("variable").and_then(|v| v.as_str()).map(String::from),
+            full_page: json
+                .get("full_page")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            variable: json
+                .get("variable")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         },
         "scroll" => TaskfileAction::Scroll {
             direction: json
@@ -410,7 +422,10 @@ fn json_to_taskfile_action(json: &serde_json::Value) -> TaskfileAction {
                 .and_then(|v| v.as_str())
                 .unwrap_or("down")
                 .to_string(),
-            amount: json.get("amount").and_then(|v| v.as_i64()).map(|v| v as i32),
+            amount: json
+                .get("amount")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32),
         },
         "select" => TaskfileAction::Select {
             selector: json_to_selector(json.get("selector")),
@@ -442,7 +457,10 @@ fn json_to_selector(json: Option<&serde_json::Value>) -> Selector {
             css: v.get("css").and_then(|s| s.as_str()).map(String::from),
             xpath: v.get("xpath").and_then(|s| s.as_str()).map(String::from),
             text: v.get("text").and_then(|s| s.as_str()).map(String::from),
-            aria_label: v.get("aria_label").and_then(|s| s.as_str()).map(String::from),
+            aria_label: v
+                .get("aria_label")
+                .and_then(|s| s.as_str())
+                .map(String::from),
         },
         None => Selector {
             css: None,

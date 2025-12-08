@@ -1,7 +1,8 @@
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+use tauri_plugin_store::StoreExt;
 
-const SERVICE_NAME: &str = "com.tasker.app";
+const STORE_FILE: &str = "auth.json";
 const AUTH_TOKEN_KEY: &str = "auth_token";
 const USER_ID_KEY: &str = "user_id";
 const USER_EMAIL_KEY: &str = "user_email";
@@ -33,162 +34,133 @@ pub struct SubscriptionStatus {
     pub cancel_at_period_end: bool,
 }
 
-/// Store auth token and user info securely in system keyring
+/// Store auth token and user info in persistent store
 #[tauri::command]
 pub async fn store_auth_token(
+    app: AppHandle,
     token: String,
     user_id: String,
     email: String,
 ) -> Result<(), String> {
-    // Store token
-    let token_entry = Entry::new(SERVICE_NAME, AUTH_TOKEN_KEY)
-        .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-    token_entry
-        .set_password(&token)
-        .map_err(|e| format!("Failed to store token: {}", e))?;
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("Failed to open store: {}", e))?;
 
-    // Store user_id
-    let user_entry = Entry::new(SERVICE_NAME, USER_ID_KEY)
-        .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-    user_entry
-        .set_password(&user_id)
-        .map_err(|e| format!("Failed to store user_id: {}", e))?;
+    store.set(AUTH_TOKEN_KEY, serde_json::json!(token));
+    store.set(USER_ID_KEY, serde_json::json!(user_id));
+    store.set(USER_EMAIL_KEY, serde_json::json!(email));
 
-    // Store email
-    let email_entry = Entry::new(SERVICE_NAME, USER_EMAIL_KEY)
-        .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-    email_entry
-        .set_password(&email)
-        .map_err(|e| format!("Failed to store email: {}", e))?;
+    store
+        .save()
+        .map_err(|e| format!("Failed to save store: {}", e))?;
 
-    log::info!("Auth credentials stored for user: {}", email);
     Ok(())
 }
 
 /// Get stored auth token
 #[tauri::command]
-pub async fn get_auth_token() -> Result<Option<String>, String> {
-    let entry = Entry::new(SERVICE_NAME, AUTH_TOKEN_KEY)
-        .map_err(|e| format!("Failed to access keyring: {}", e))?;
+pub async fn get_auth_token(app: AppHandle) -> Result<Option<String>, String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("Failed to open store: {}", e))?;
 
-    match entry.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Failed to get token: {}", e)),
+    match store.get(AUTH_TOKEN_KEY) {
+        Some(value) => Ok(value.as_str().map(|s| s.to_string())),
+        None => Ok(None),
     }
 }
 
 /// Clear auth token (logout)
 #[tauri::command]
-pub async fn clear_auth_token() -> Result<(), String> {
-    // Clear token
-    if let Ok(entry) = Entry::new(SERVICE_NAME, AUTH_TOKEN_KEY) {
-        let _ = entry.delete_credential();
-    }
+pub async fn clear_auth_token(app: AppHandle) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("Failed to open store: {}", e))?;
 
-    // Clear user_id
-    if let Ok(entry) = Entry::new(SERVICE_NAME, USER_ID_KEY) {
-        let _ = entry.delete_credential();
-    }
+    store.delete(AUTH_TOKEN_KEY);
+    store.delete(USER_ID_KEY);
+    store.delete(USER_EMAIL_KEY);
 
-    // Clear email
-    if let Ok(entry) = Entry::new(SERVICE_NAME, USER_EMAIL_KEY) {
-        let _ = entry.delete_credential();
-    }
+    store
+        .save()
+        .map_err(|e| format!("Failed to save store: {}", e))?;
 
-    log::info!("Auth credentials cleared");
     Ok(())
 }
 
-/// Check auth status with backend
+/// Check auth status - verifies token with backend and clears if expired
 #[tauri::command]
-pub async fn check_auth_status() -> Result<AuthState, String> {
-    // Get stored token
-    let token = match get_auth_token().await? {
-        Some(t) => t,
-        None => {
-            return Ok(AuthState {
-                is_authenticated: false,
-                user_id: None,
-                email: None,
-                has_subscription: false,
-            })
-        }
+pub async fn check_auth_status(app: AppHandle) -> Result<AuthState, String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    // Check if we have a stored token
+    let token = match store.get(AUTH_TOKEN_KEY) {
+        Some(val) => val.as_str().map(|s| s.to_string()),
+        None => None,
     };
 
-    // Verify session with backend
-    let client = reqwest::Client::new();
-    let backend_url = get_backend_url();
-    let response = client
-        .get(format!("{}/api/auth/session", backend_url))
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to check auth: {}", e))?;
+    let not_authenticated = AuthState {
+        is_authenticated: false,
+        user_id: None,
+        email: None,
+        has_subscription: false,
+    };
 
-    if !response.status().is_success() {
-        // Token invalid, clear it
-        let _ = clear_auth_token().await;
-        return Ok(AuthState {
-            is_authenticated: false,
-            user_id: None,
-            email: None,
-            has_subscription: false,
-        });
+    if token.is_none() {
+        return Ok(not_authenticated);
     }
 
-    // Parse session response
-    let session: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let token = token.unwrap();
 
-    let user_id = session
-        .get("user")
-        .and_then(|u| u.get("id"))
-        .and_then(|id| id.as_str())
-        .map(|s| s.to_string());
+    // Verify token with backend
+    let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
 
-    let email = session
-        .get("user")
-        .and_then(|u| u.get("email"))
-        .and_then(|e| e.as_str())
-        .map(|s| s.to_string());
-
-    // Get subscription status
-    let sub_response = client
-        .get(format!("{}/subscription/status", backend_url))
+    let session_response = client
+        .get(format!("{}/api/auth/get-session", backend_url))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await;
 
-    let has_subscription = if let Ok(resp) = sub_response {
-        if resp.status().is_success() {
-            resp.json::<SubscriptionStatus>()
-                .await
-                .map(|s| s.has_subscription)
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    } else {
-        false
-    };
+    // If request fails or returns non-success, token is invalid/expired
+    match session_response {
+        Ok(resp) if resp.status().is_success() => {
+            // Token is valid, get stored user info
+            let user_id = store
+                .get(USER_ID_KEY)
+                .and_then(|v| v.as_str().map(|s| s.to_string()));
+            let email = store
+                .get(USER_EMAIL_KEY)
+                .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-    Ok(AuthState {
-        is_authenticated: true,
-        user_id,
-        email,
-        has_subscription,
-    })
+            // Check subscription status
+            let has_subscription = check_subscription(&client, &backend_url, &token).await;
+
+            Ok(AuthState {
+                is_authenticated: true,
+                user_id,
+                email,
+                has_subscription,
+            })
+        }
+        _ => {
+            // Token invalid/expired - clear stored credentials
+            store.delete(AUTH_TOKEN_KEY);
+            store.delete(USER_ID_KEY);
+            store.delete(USER_EMAIL_KEY);
+            let _ = store.save();
+
+            Ok(not_authenticated)
+        }
+    }
 }
 
 /// Open Stripe checkout in default browser
 #[tauri::command]
-pub async fn open_checkout() -> Result<(), String> {
-    let token = get_auth_token()
-        .await?
-        .ok_or("Not authenticated")?;
+pub async fn open_checkout(app: AppHandle) -> Result<(), String> {
+    let token = get_auth_token(app).await?.ok_or("Not authenticated")?;
 
     let client = reqwest::Client::new();
     let backend_url = get_backend_url();
@@ -217,16 +189,13 @@ pub async fn open_checkout() -> Result<(), String> {
     // Open in default browser
     open::that(url).map_err(|e| format!("Failed to open browser: {}", e))?;
 
-    log::info!("Opened checkout in browser");
     Ok(())
 }
 
 /// Open Stripe customer portal in default browser
 #[tauri::command]
-pub async fn open_customer_portal() -> Result<(), String> {
-    let token = get_auth_token()
-        .await?
-        .ok_or("Not authenticated")?;
+pub async fn open_customer_portal(app: AppHandle) -> Result<(), String> {
+    let token = get_auth_token(app).await?.ok_or("Not authenticated")?;
 
     let client = reqwest::Client::new();
     let backend_url = get_backend_url();
@@ -255,7 +224,6 @@ pub async fn open_customer_portal() -> Result<(), String> {
     // Open in default browser
     open::that(url).map_err(|e| format!("Failed to open browser: {}", e))?;
 
-    log::info!("Opened customer portal in browser");
     Ok(())
 }
 
@@ -282,7 +250,12 @@ async fn check_subscription(client: &reqwest::Client, backend_url: &str, token: 
 
 /// Sign up with email and password
 #[tauri::command]
-pub async fn sign_up_email(email: String, password: String, name: Option<String>) -> Result<AuthState, String> {
+pub async fn sign_up_email(
+    app: AppHandle,
+    email: String,
+    password: String,
+    name: Option<String>,
+) -> Result<AuthState, String> {
     let client = reqwest::Client::new();
     let backend_url = get_backend_url();
 
@@ -334,6 +307,7 @@ pub async fn sign_up_email(email: String, password: String, name: Option<String>
 
     // Store credentials
     store_auth_token(
+        app,
         session_token.to_string(),
         user_id.to_string(),
         user_email.to_string(),
@@ -343,7 +317,6 @@ pub async fn sign_up_email(email: String, password: String, name: Option<String>
     // Check subscription status
     let has_subscription = check_subscription(&client, &backend_url, session_token).await;
 
-    log::info!("User signed up: {}", user_email);
     Ok(AuthState {
         is_authenticated: true,
         user_id: Some(user_id.to_string()),
@@ -354,7 +327,11 @@ pub async fn sign_up_email(email: String, password: String, name: Option<String>
 
 /// Sign in with email and password
 #[tauri::command]
-pub async fn sign_in_email(email: String, password: String) -> Result<AuthState, String> {
+pub async fn sign_in_email(
+    app: AppHandle,
+    email: String,
+    password: String,
+) -> Result<AuthState, String> {
     let client = reqwest::Client::new();
     let backend_url = get_backend_url();
 
@@ -399,6 +376,7 @@ pub async fn sign_in_email(email: String, password: String) -> Result<AuthState,
         .ok_or("Missing email in response")?;
 
     store_auth_token(
+        app,
         session_token.to_string(),
         user_id.to_string(),
         user_email.to_string(),
@@ -407,7 +385,6 @@ pub async fn sign_in_email(email: String, password: String) -> Result<AuthState,
 
     let has_subscription = check_subscription(&client, &backend_url, session_token).await;
 
-    log::info!("User signed in: {}", user_email);
     Ok(AuthState {
         is_authenticated: true,
         user_id: Some(user_id.to_string()),
@@ -415,4 +392,3 @@ pub async fn sign_in_email(email: String, password: String) -> Result<AuthState,
         has_subscription,
     })
 }
-

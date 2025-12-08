@@ -23,8 +23,6 @@ pub async fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let db_path = app_dir.join("tasker.db");
     let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
 
-    log::info!("Initializing database at: {}", db_path.display());
-
     // Create connection pool
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -37,7 +35,6 @@ pub async fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // Store pool globally using OnceLock (thread-safe)
     DB_POOL.set(pool).expect("Database already initialized");
 
-    log::info!("Database initialized successfully");
     Ok(())
 }
 

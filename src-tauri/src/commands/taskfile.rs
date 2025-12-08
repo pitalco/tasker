@@ -1,10 +1,8 @@
 use crate::db;
-use crate::taskfile::{
-    self, Taskfile, ValidationResult,
-};
+use crate::taskfile::{self, Taskfile, ValidationResult};
 use serde::{Deserialize, Serialize};
-use tauri_plugin_dialog::DialogExt;
 use std::fs;
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportResult {
@@ -124,7 +122,8 @@ pub async fn save_taskfile(app: tauri::AppHandle, workflow_id: String) -> Result
     let filename = taskfile::suggest_filename(&taskfile_data);
 
     // Show save dialog
-    let file_path = app.dialog()
+    let file_path = app
+        .dialog()
         .file()
         .set_file_name(&filename)
         .add_filter("Taskfile", &["yaml", "taskfile.yaml"])
@@ -132,7 +131,8 @@ pub async fn save_taskfile(app: tauri::AppHandle, workflow_id: String) -> Result
 
     match file_path {
         Some(path) => {
-            fs::write(path.as_path().unwrap(), yaml).map_err(|e| format!("Failed to write file: {}", e))?;
+            fs::write(path.as_path().unwrap(), yaml)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(true)
         }
         None => Ok(false), // User cancelled

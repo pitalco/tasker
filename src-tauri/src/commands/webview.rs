@@ -1,6 +1,6 @@
-use tauri::{Emitter, Manager, WebviewBuilder, WebviewUrl};
 use tauri::LogicalPosition;
 use tauri::LogicalSize;
+use tauri::{Emitter, Manager, WebviewBuilder, WebviewUrl};
 
 /// Get window position info for debugging
 #[tauri::command]
@@ -28,16 +28,6 @@ pub async fn create_browser_tab(
     label: String,
     bounds: (f64, f64, f64, f64), // x, y, width, height as f64 for precision
 ) -> Result<String, String> {
-    log::info!("Creating browser tab: {} at {} with bounds {:?}", label, url, bounds);
-
-    // Get window position info for debugging
-    let window_outer = window.outer_position().ok();
-    let window_inner = window.inner_position().ok();
-    let scale = window.scale_factor().unwrap_or(1.0);
-
-    log::info!("Window outer_position: {:?}, inner_position: {:?}, scale: {}",
-               window_outer, window_inner, scale);
-
     // Parse the URL - WebviewUrl::External expects a url::Url
     let webview_url = WebviewUrl::External(url.parse().map_err(|e| format!("Invalid URL: {}", e))?);
 
@@ -52,9 +42,6 @@ pub async fn create_browser_tab(
     // Create at origin first (workaround for Linux positioning issues)
     let initial_position = LogicalPosition::new(0.0, 0.0);
 
-    log::info!("Creating webview at origin, will reposition to: {:?}, size: {:?}",
-               target_position, target_size);
-
     // add_child takes the builder directly (not a built webview)
     window
         .add_child(webview_builder, initial_position, target_size)
@@ -62,27 +49,18 @@ pub async fn create_browser_tab(
 
     // Now reposition the webview to the correct location
     if let Some(webview) = window.get_webview(&label) {
-        log::info!("Repositioning webview to target position");
-
-        // Try setting position with a small delay workaround
-        webview.set_position(target_position).map_err(|e| e.to_string())?;
+        webview
+            .set_position(target_position)
+            .map_err(|e| e.to_string())?;
         webview.set_size(target_size).map_err(|e| e.to_string())?;
-
-        // Log final position for debugging
-        if let Ok(pos) = webview.position() {
-            log::info!("Webview final position: {:?}", pos);
-        }
     }
 
-    log::info!("Browser tab created: {}", label);
     Ok(label)
 }
 
 /// Close a browser tab
 #[tauri::command]
 pub async fn close_browser_tab(window: tauri::Window, label: String) -> Result<bool, String> {
-    log::info!("Closing browser tab: {}", label);
-
     if let Some(webview) = window.get_webview(&label) {
         webview.close().map_err(|e| e.to_string())?;
         Ok(true)
@@ -93,9 +71,11 @@ pub async fn close_browser_tab(window: tauri::Window, label: String) -> Result<b
 
 /// Navigate a tab to a new URL
 #[tauri::command]
-pub async fn navigate_tab(window: tauri::Window, label: String, url: String) -> Result<bool, String> {
-    log::info!("Navigating tab {} to {}", label, url);
-
+pub async fn navigate_tab(
+    window: tauri::Window,
+    label: String,
+    url: String,
+) -> Result<bool, String> {
     if let Some(webview) = window.get_webview(&label) {
         // Use JavaScript navigation to trigger the recording script
         let script = format!("window.location.href = '{}'", url.replace('\'', "\\'"));
@@ -113,7 +93,6 @@ pub async fn resize_tab(
     label: String,
     bounds: (f64, f64, f64, f64),
 ) -> Result<bool, String> {
-    log::debug!("Resizing tab {} to bounds {:?}", label, bounds);
     if let Some(webview) = window.get_webview(&label) {
         webview
             .set_position(LogicalPosition::new(bounds.0, bounds.1))
@@ -168,8 +147,6 @@ pub async fn on_recording_event(
     action_type: String,
     data: serde_json::Value,
 ) -> Result<(), String> {
-    log::debug!("Recording event: {} - {:?}", action_type, data);
-
     // Emit to frontend
     app.emit(
         "recording_event",

@@ -5,14 +5,13 @@ use std::path::Path;
 
 /// Parse a Taskfile from YAML string
 pub fn parse_yaml(yaml_content: &str) -> Result<Taskfile, String> {
-    serde_yaml::from_str(yaml_content)
-        .map_err(|e| format!("Failed to parse Taskfile YAML: {}", e))
+    serde_yaml::from_str(yaml_content).map_err(|e| format!("Failed to parse Taskfile YAML: {}", e))
 }
 
 /// Parse a Taskfile from a file path
 pub fn parse_file(path: &Path) -> Result<Taskfile, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
     parse_yaml(&content)
 }
 

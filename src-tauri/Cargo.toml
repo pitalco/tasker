@@ -48,11 +48,11 @@ tauri-plugin-dialog = "2"
 # Deep linking for auth callbacks
 tauri-plugin-deep-link = "2"
 
-# Secure credential storage
-keyring = "3"
-
 # Browser opening
 open = "5"
 
 # Environment variables from .env files
 dotenvy = "0.15"
+
+# Persistent storage for auth
+tauri-plugin-store = "2"

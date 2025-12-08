@@ -1,8 +1,8 @@
-use super::models::*;
 use super::get_pool;
+use super::models::*;
+use chrono::Utc;
 use sqlx::Row;
 use uuid::Uuid;
-use chrono::Utc;
 
 pub async fn get_all_workflows() -> Result<Vec<Workflow>, sqlx::Error> {
     let pool = get_pool();
@@ -86,7 +86,8 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
         start_url: None,
         llm_provider: None,
         recording_source: "manual".to_string(),
-    })).unwrap();
+    }))
+    .unwrap();
 
     sqlx::query(
         r#"
@@ -124,7 +125,10 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
     })
 }
 
-pub async fn update_workflow(id: &str, req: UpdateWorkflowRequest) -> Result<Option<Workflow>, sqlx::Error> {
+pub async fn update_workflow(
+    id: &str,
+    req: UpdateWorkflowRequest,
+) -> Result<Option<Workflow>, sqlx::Error> {
     let pool = get_pool();
 
     // Get existing workflow
@@ -220,8 +224,7 @@ pub async fn get_settings() -> Result<AppSettings, sqlx::Error> {
     match row {
         Some(r) => {
             let llm_config_json: String = r.get("llm_config_json");
-            let llm_config: LLMConfig = serde_json::from_str(&llm_config_json)
-                .unwrap_or_default();
+            let llm_config: LLMConfig = serde_json::from_str(&llm_config_json).unwrap_or_default();
             let default_max_steps: Option<i32> = r.get("default_max_steps");
 
             Ok(AppSettings {

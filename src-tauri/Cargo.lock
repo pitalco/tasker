@@ -2151,16 +2151,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring"
-version = "3.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
-dependencies = [
- "log",
- "zeroize",
-]
-
-[[package]]
 name = "kuchikiki"
 version = "0.8.8-speedreader"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4681,7 +4671,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "keyring",
  "log",
  "open",
  "regex-lite",
@@ -4696,6 +4685,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tauri-plugin-shell",
+ "tauri-plugin-store",
  "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",
@@ -4935,6 +4925,22 @@ dependencies = [
  "tauri-plugin",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "tauri-plugin-store"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59a77036340a97eb5bbe1b3209c31e5f27f75e6f92a52fd9dd4b211ef08bf310"
+dependencies = [
+ "dunce",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

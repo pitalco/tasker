@@ -2,9 +2,7 @@ use crate::db::{self, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowDto}
 
 #[tauri::command]
 pub async fn get_workflows() -> Result<Vec<WorkflowDto>, String> {
-    let workflows = db::get_all_workflows()
-        .await
-        .map_err(|e| e.to_string())?;
+    let workflows = db::get_all_workflows().await.map_err(|e| e.to_string())?;
 
     Ok(workflows.into_iter().map(WorkflowDto::from).collect())
 }
@@ -28,7 +26,10 @@ pub async fn create_workflow(request: CreateWorkflowRequest) -> Result<WorkflowD
 }
 
 #[tauri::command]
-pub async fn update_workflow(id: String, request: UpdateWorkflowRequest) -> Result<Option<WorkflowDto>, String> {
+pub async fn update_workflow(
+    id: String,
+    request: UpdateWorkflowRequest,
+) -> Result<Option<WorkflowDto>, String> {
     let workflow = db::update_workflow(&id, request)
         .await
         .map_err(|e| e.to_string())?;
@@ -38,7 +39,5 @@ pub async fn update_workflow(id: String, request: UpdateWorkflowRequest) -> Resu
 
 #[tauri::command]
 pub async fn delete_workflow(id: String) -> Result<bool, String> {
-    db::delete_workflow(&id)
-        .await
-        .map_err(|e| e.to_string())
+    db::delete_workflow(&id).await.map_err(|e| e.to_string())
 }
