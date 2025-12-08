@@ -59,23 +59,6 @@ class AuthStore {
 		this.hasSubscription = state.has_subscription;
 	}
 
-	// Start OAuth flow - opens browser to provider
-	async startOAuth(provider: 'google' | 'github'): Promise<boolean> {
-		this.isSigningIn = true;
-		this.error = null;
-
-		try {
-			await authService.startOAuth(provider);
-			return true;
-		} catch (e) {
-			this.error = e instanceof Error ? e.message : `Failed to start ${provider} sign in`;
-			console.error(`Failed to start ${provider} OAuth:`, e);
-			this.isSigningIn = false;
-			return false;
-		}
-		// Note: isSigningIn stays true until we get the deep link callback
-	}
-
 	// Sign in with email/password
 	async signInEmail(email: string, password: string): Promise<boolean> {
 		this.isSigningIn = true;
@@ -113,34 +96,11 @@ class AuthStore {
 	}
 
 	private async handleDeepLink(url: string) {
-		// Check for auth callback
-		const token = authService.parseAuthToken(url);
-		if (token) {
-			await this.verifyAuthCallback(token);
-			return;
-		}
-
 		// Check for subscription result
 		const subscriptionResult = authService.parseSubscriptionResult(url);
 		if (subscriptionResult === 'success') {
 			// Refresh to get updated subscription status
 			await this.refresh();
-		}
-	}
-
-	// Verify auth callback token from deep link
-	private async verifyAuthCallback(token: string) {
-		this.isSigningIn = true;
-		this.error = null;
-
-		try {
-			const state = await authService.verifyOAuthCallback(token);
-			this.updateFromState(state);
-		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to verify authentication';
-			console.error('Failed to verify auth callback:', e);
-		} finally {
-			this.isSigningIn = false;
 		}
 	}
 

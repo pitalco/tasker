@@ -193,7 +193,7 @@
 							<p class="text-sm text-black/70 mb-3">
 								Get access to Tasker Fast vision model. No API key needed!
 							</p>
-							<p class="font-black text-2xl text-black mb-3">$10/month</p>
+							<p class="font-black text-2xl text-black mb-3">$15/month</p>
 							<button
 								onclick={() => auth.openCheckout()}
 								class="btn-brutal bg-brutal-cyan text-black w-full"

@@ -124,7 +124,7 @@ impl RailwayClient {
                     }
                     "subscription_required" => {
                         return Err(anyhow!(
-                            "Active subscription required to use Tasker Fast. Please subscribe at $10/month."
+                            "Active subscription required to use Tasker Fast. Please subscribe at $15/month."
                         ));
                     }
                     "model_cold_start" => {

@@ -20,11 +20,6 @@ export async function checkAuthStatus(): Promise<AuthState> {
 	return invoke<AuthState>('check_auth_status');
 }
 
-// Start OAuth flow - opens browser to provider
-export async function startOAuth(provider: 'google' | 'github'): Promise<void> {
-	return invoke('start_oauth', { provider });
-}
-
 // Sign in with email/password
 export async function signInEmail(email: string, password: string): Promise<AuthState> {
 	return invoke<AuthState>('sign_in_email', { email, password });
@@ -37,11 +32,6 @@ export async function signUpEmail(
 	name?: string
 ): Promise<AuthState> {
 	return invoke<AuthState>('sign_up_email', { email, password, name });
-}
-
-// Verify OAuth callback token (called after deep link from OAuth)
-export async function verifyOAuthCallback(token: string): Promise<AuthState> {
-	return invoke<AuthState>('verify_oauth_callback', { token });
 }
 
 // Store token after deep link callback
@@ -80,27 +70,6 @@ export function onDeepLink(
 	return listen<string>('deep-link', (event) => {
 		callback(event.payload);
 	});
-}
-
-// Parse auth token from deep link URL
-export function parseAuthToken(url: string): string | null {
-	// Expected format: tasker://auth/callback?token=xxx
-	if (!url.startsWith('tasker://auth')) {
-		return null;
-	}
-
-	try {
-		// Handle the URL - it might not be a valid URL format
-		const queryStart = url.indexOf('?');
-		if (queryStart === -1) {
-			return null;
-		}
-
-		const params = new URLSearchParams(url.slice(queryStart + 1));
-		return params.get('token');
-	} catch {
-		return null;
-	}
 }
 
 // Handle subscription success/cancel deep links
