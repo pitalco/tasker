@@ -6,7 +6,11 @@ use serde_json::Value;
 
 const SERVICE_NAME: &str = "com.tasker.app";
 const AUTH_TOKEN_KEY: &str = "auth_token";
-const RAILWAY_API_URL: &str = "https://api.tasker-app.com";
+const DEFAULT_BACKEND_URL: &str = "https://api.automatewithtasker.com";
+
+fn get_backend_url() -> String {
+    std::env::var("TASKER_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
+}
 
 /// Request structure for Railway LLM proxy (OpenAI-compatible)
 #[derive(Debug, Clone, Serialize)]
@@ -103,7 +107,7 @@ impl RailwayClient {
     pub async fn chat(&self, request: RailwayChatRequest) -> Result<RailwayChatResponse> {
         let response = self
             .client
-            .post(format!("{}/llm/chat", RAILWAY_API_URL))
+            .post(format!("{}/llm/chat", get_backend_url()))
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -194,7 +198,7 @@ pub async fn check_subscription_status() -> Result<bool> {
 
     let client = Client::new();
     let response = client
-        .get(format!("{}/subscription/status", RAILWAY_API_URL))
+        .get(format!("{}/subscription/status", get_backend_url()))
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await?;

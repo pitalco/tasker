@@ -138,6 +138,7 @@ pub async fn start_replay(
         max_steps: 50,
         headless: request.headless,
         provider: Some(provider.to_string()),
+        auth_token: request.auth_token.clone(),
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);

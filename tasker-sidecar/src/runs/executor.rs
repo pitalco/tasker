@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
-use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse, get_auth_token};
+use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse};
 
 /// Unified tool call representation that works with both genai and Railway
 #[derive(Debug, Clone)]
@@ -108,6 +108,8 @@ pub struct ExecutorConfig {
     pub max_steps: usize,
     pub headless: bool,
     pub provider: Option<String>,
+    /// Auth token for Tasker Fast (passed from frontend)
+    pub auth_token: Option<String>,
 }
 
 impl Default for ExecutorConfig {
@@ -118,6 +120,7 @@ impl Default for ExecutorConfig {
             max_steps: MAX_STEPS,
             headless: false,
             provider: None,
+            auth_token: None,
         }
     }
 }
@@ -229,19 +232,13 @@ Keep taking actions until the condition above is clearly met.
         // Check if using Tasker Fast (Railway proxy)
         let uses_railway = self.config.uses_tasker_fast();
         let railway_client = if uses_railway {
-            // Verify auth token exists for Tasker Fast
-            let auth_token = get_auth_token()
-                .map_err(|e| {
-                    let error = format!("Failed to get auth token: {}", e);
-                    self.logger.error(run_id, &error);
-                    anyhow!(error)
-                })?
-                .ok_or_else(|| {
-                    let error = "Not authenticated. Please sign in to use Tasker Fast.";
-                    self.logger.error(run_id, error);
-                    self.logger.status(run_id, RunStatus::Failed, Some(error.to_string()));
-                    anyhow!(error)
-                })?;
+            // Use auth token passed from frontend
+            let auth_token = self.config.auth_token.clone().ok_or_else(|| {
+                let error = "Not authenticated. Please sign in to use Tasker Fast.";
+                self.logger.error(run_id, error);
+                self.logger.status(run_id, RunStatus::Failed, Some(error.to_string()));
+                anyhow!(error)
+            })?;
 
             self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
             Some(RailwayClient::with_token(auth_token))

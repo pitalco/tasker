@@ -10,7 +10,10 @@ use tauri_plugin_deep_link::DeepLinkExt;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load environment variables from .env file (if exists)
-    let _ = dotenvy::dotenv();
+    // Try current directory first, then parent (for dev where .env is in project root)
+    if dotenvy::dotenv().is_err() {
+        let _ = dotenvy::from_filename("../.env");
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())

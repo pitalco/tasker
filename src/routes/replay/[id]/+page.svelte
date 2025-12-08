@@ -17,6 +17,7 @@
 		PROVIDER_MODELS,
 		type ApiKeys
 	} from '$lib/services/settingsService';
+	import { checkAuthStatus } from '$lib/services/authService';
 	import type { Workflow } from '$lib/types/workflow';
 
 	const workflowState = getWorkflowState();
@@ -68,12 +69,18 @@
 	// API keys from settings
 	let apiKeys = $state<ApiKeys>({});
 	let hasAnyKeys = $state(false);
+	let hasSubscription = $state(false);
 
 	const workflowId = $derived($page.params.id);
 
-	// Get available providers (those with keys configured)
+	// Get available providers (those with keys configured OR subscription-based with active subscription)
 	const availableProviders = $derived(
-		PROVIDERS.filter(p => (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0)
+		PROVIDERS.filter(p => {
+			if (p.requiresSubscription) {
+				return hasSubscription;
+			}
+			return (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0;
+		})
 	);
 
 	// Get models for current provider
@@ -108,6 +115,14 @@
 			hasAnyKeys = Object.values(apiKeys).some(key => key && key.length > 0);
 		} catch {
 			console.warn('Failed to load settings');
+		}
+
+		// Check subscription status
+		try {
+			const authState = await checkAuthStatus();
+			hasSubscription = authState.has_subscription;
+		} catch {
+			console.warn('Failed to check auth status');
 		}
 
 		isLoading = false;
@@ -273,10 +288,18 @@
 	const successCount = $derived(results.filter((r) => r.success).length);
 	const failureCount = $derived(results.filter((r) => !r.success).length);
 
-	// Check if current provider has an API key
-	const hasKeyForCurrentProvider = $derived(
-		(apiKeys[llmProvider as keyof ApiKeys] ?? '').length > 0
+	// Check if current provider requires subscription
+	const currentProviderRequiresSubscription = $derived(
+		PROVIDERS.find(p => p.id === llmProvider)?.requiresSubscription ?? false
 	);
+
+	// Check if current provider is accessible (has API key OR is subscription-based with active subscription)
+	const hasAccessForCurrentProvider = $derived(() => {
+		if (currentProviderRequiresSubscription) {
+			return hasSubscription;
+		}
+		return (apiKeys[llmProvider as keyof ApiKeys] ?? '').length > 0;
+	});
 </script>
 
 <div class="max-w-4xl mx-auto space-y-8">
@@ -317,17 +340,17 @@
 			<a href="/" class="btn-brutal bg-brutal-cyan text-black">VIEW ALL WORKFLOWS</a>
 		</div>
 	{:else if !isRunning}
-		<!-- No API Keys Warning -->
-		{#if !hasAnyKeys && availableProviders.length === 0}
+		<!-- No providers available warning -->
+		{#if availableProviders.length === 0}
 			<div class="bg-brutal-yellow border-3 border-black p-4" style="box-shadow: 4px 4px 0 0 #000;">
 				<div class="flex items-start gap-3">
-					<svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+					<svg class="w-6 h-6 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
 						<path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
 					</svg>
 					<div>
-						<p class="font-bold text-black">No API keys configured</p>
+						<p class="font-bold text-black">No AI providers available</p>
 						<p class="text-sm text-black/80 mt-1">
-							AI agent requires an API key. Configure API keys in Settings.
+							Configure API keys in Settings or subscribe to use Tasker Fast.
 						</p>
 						<a href="/settings" class="inline-block mt-3 btn-brutal bg-white text-black text-sm py-2">
 							GO TO SETTINGS
@@ -348,7 +371,7 @@
 
 				<!-- LLM Provider -->
 				<div>
-					<label class="block text-sm font-bold text-black uppercase mb-2">LLM Provider</label>
+					<div class="block text-sm font-bold text-black uppercase mb-2">LLM Provider</div>
 					<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 						{#each availableProviders as provider}
 							<button
@@ -369,33 +392,46 @@
 
 				<!-- Model -->
 				<div>
-					<label class="block text-sm font-bold text-black uppercase mb-2">Model</label>
-					<select bind:value={llmModel} class="input-brutal cursor-pointer">
+					<label for="llm-model-select" class="block text-sm font-bold text-black uppercase mb-2">Model</label>
+					<select id="llm-model-select" bind:value={llmModel} class="input-brutal cursor-pointer">
 						{#each availableModels as model}
 							<option value={model.id}>{model.name}</option>
 						{/each}
 					</select>
 				</div>
 
-				<!-- API Key Status -->
-				<div class="flex items-center gap-2 p-3 border-3 border-black {hasKeyForCurrentProvider ? 'bg-brutal-lime/30' : 'bg-brutal-magenta/30'}" style="box-shadow: 2px 2px 0 0 #000;">
-					{#if hasKeyForCurrentProvider}
+				<!-- Provider Status -->
+				<div class="flex items-center gap-2 p-3 border-3 border-black {hasAccessForCurrentProvider() ? 'bg-brutal-lime/30' : 'bg-brutal-magenta/30'}" style="box-shadow: 2px 2px 0 0 #000;">
+					{#if hasAccessForCurrentProvider()}
 						<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
 							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
 						</svg>
-						<span class="font-bold text-sm">API key configured in Settings</span>
+						<span class="font-bold text-sm">
+							{#if currentProviderRequiresSubscription}
+								Subscription active
+							{:else}
+								API key configured
+							{/if}
+						</span>
 					{:else}
 						<svg class="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
 							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
 						</svg>
-						<span class="font-bold text-sm">No API key - <a href="/settings" class="underline">configure in Settings</a></span>
+						<span class="font-bold text-sm">
+							{#if currentProviderRequiresSubscription}
+								Subscription required - <a href="/settings" class="underline">subscribe in Settings</a>
+							{:else}
+								No API key - <a href="/settings" class="underline">configure in Settings</a>
+							{/if}
+						</span>
 					{/if}
 				</div>
 
 				<!-- Task Description -->
 				<div>
-					<label class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
+					<label for="task-description-textarea" class="block text-sm font-bold text-black uppercase mb-2">Custom Instructions (Optional)</label>
 					<textarea
+						id="task-description-textarea"
 						bind:value={taskDescription}
 						placeholder="Add any specific instructions for the AI..."
 						class="input-brutal h-24 resize-none"
@@ -405,8 +441,8 @@
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
 					<!-- Iterations -->
 					<div>
-						<label class="block text-sm font-bold text-black uppercase mb-2">Iterations</label>
-						<input type="number" bind:value={iterations} min="1" max="100" class="input-brutal" />
+						<label for="iterations-input" class="block text-sm font-bold text-black uppercase mb-2">Iterations</label>
+						<input id="iterations-input" type="number" bind:value={iterations} min="1" max="100" class="input-brutal" />
 						<p class="text-xs text-black/60 font-medium mt-1">Run the workflow multiple times</p>
 					</div>
 
@@ -418,6 +454,7 @@
 						</div>
 						<button
 							onclick={() => (headless = !headless)}
+							aria-label="Toggle headless mode"
 							class="w-14 h-8 border-3 border-black transition-all cursor-pointer {headless ? 'bg-brutal-lime' : 'bg-white'}"
 							style="box-shadow: 2px 2px 0 0 #000;"
 						>
@@ -431,7 +468,7 @@
 		<!-- Start Button -->
 		<button
 			onclick={handleStart}
-			disabled={isStarting || !hasKeyForCurrentProvider}
+			disabled={isStarting || !hasAccessForCurrentProvider()}
 			class="w-full btn-brutal bg-brutal-lime text-black text-xl py-4 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
 		>
 			{#if isStarting}

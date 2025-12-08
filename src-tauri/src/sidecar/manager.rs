@@ -32,11 +32,18 @@ impl SidecarManager {
 
         // Spawn the sidecar process
         // Set RUST_LOG to filter out noisy chromiumoxide errors
-        let mut child = Command::new(&sidecar_path)
-            .env(
-                "RUST_LOG",
-                "info,chromiumoxide::conn=warn,chromiumoxide::handler=warn",
-            )
+        let mut cmd = Command::new(&sidecar_path);
+        cmd.env(
+            "RUST_LOG",
+            "info,chromiumoxide::conn=warn,chromiumoxide::handler=warn",
+        );
+
+        // Pass backend URL if set
+        if let Ok(backend_url) = std::env::var("TASKER_BACKEND_URL") {
+            cmd.env("TASKER_BACKEND_URL", backend_url);
+        }
+
+        let mut child = cmd
             .stdout(Stdio::null()) // Sidecar uses tracing which writes to stderr only
             .stderr(Stdio::piped())
             .spawn()

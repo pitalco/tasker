@@ -1,6 +1,8 @@
 use crate::sidecar::SidecarManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tauri::AppHandle;
+use tauri_plugin_store::StoreExt;
 
 /// Request to start a replay - AI agent is ALWAYS used
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,7 +69,7 @@ pub async fn get_llm_providers() -> Result<ProvidersResponse, String> {
 }
 
 #[tauri::command]
-pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse, String> {
+pub async fn start_replay(app: AppHandle, request: StartReplayRequest) -> Result<ReplayResponse, String> {
     // Ensure sidecar is running
     if !SidecarManager::is_running().await {
         SidecarManager::start().await?;
@@ -99,9 +101,21 @@ pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse,
         }
     }
 
+    // Get auth token for Tasker Fast provider
+    let provider = request.llm_provider.as_deref().unwrap_or("google");
+    let auth_token = if provider == "tasker-fast" {
+        // Get token from store
+        app.store("auth.json")
+            .ok()
+            .and_then(|store| store.get("auth_token"))
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+    } else {
+        None
+    };
+
     let body = serde_json::json!({
         "workflow": workflow,
-        "llm_provider": request.llm_provider.unwrap_or_else(|| "google".to_string()),
+        "llm_provider": provider,
         "llm_model": request.llm_model.unwrap_or_else(|| "gemini-3-pro-preview".to_string()),
         "task_description": request.task_description,
         "variables": request.variables.unwrap_or_default(),
@@ -109,6 +123,7 @@ pub async fn start_replay(request: StartReplayRequest) -> Result<ReplayResponse,
         "headless": request.headless.unwrap_or(false),
         "stop_when": request.stop_when,
         "max_steps": request.max_steps,
+        "auth_token": auth_token,
     });
 
     let response = client

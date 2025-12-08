@@ -12,7 +12,9 @@ const DEFAULT_BACKEND_URL: &str = "https://api.automatewithtasker.com";
 
 /// Get the backend URL from environment variable or use default
 fn get_backend_url() -> String {
-    std::env::var("TASKER_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
+    let url = std::env::var("TASKER_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string());
+    log::info!("Using backend URL: {}", url);
+    url
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,22 +231,37 @@ pub async fn open_customer_portal(app: AppHandle) -> Result<(), String> {
 
 // Helper function to check subscription status
 async fn check_subscription(client: &reqwest::Client, backend_url: &str, token: &str) -> bool {
-    if let Ok(resp) = client
-        .get(format!("{}/subscription/status", backend_url))
+    let url = format!("{}/subscription/status", backend_url);
+    log::info!("Checking subscription at: {}", url);
+
+    match client
+        .get(&url)
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
     {
-        if resp.status().is_success() {
-            resp.json::<SubscriptionStatus>()
-                .await
-                .map(|s| s.has_subscription)
-                .unwrap_or(false)
-        } else {
+        Ok(resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                match resp.json::<SubscriptionStatus>().await {
+                    Ok(s) => {
+                        log::info!("Subscription status: has_subscription={}", s.has_subscription);
+                        s.has_subscription
+                    }
+                    Err(e) => {
+                        log::error!("Failed to parse subscription response: {}", e);
+                        false
+                    }
+                }
+            } else {
+                log::error!("Subscription check failed with status: {}", status);
+                false
+            }
+        }
+        Err(e) => {
+            log::error!("Subscription check request failed: {}", e);
             false
         }
-    } else {
-        false
     }
 }
 
