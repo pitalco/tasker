@@ -346,6 +346,9 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
             format!(" {}", attrs.join(" "))
         };
 
+        // Add position info: @(x,y) for spatial awareness
+        let pos = format!("@({},{})", elem.bounds.x as i32, elem.bounds.y as i32);
+
         let text = elem
             .text
             .as_ref()
@@ -353,8 +356,8 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
             .filter(|t| !t.is_empty());
 
         let line = match text {
-            Some(t) => format!("[{}]<{}{}>{}", elem.index, elem.tag, attr_str, t),
-            None => format!("[{}]<{}{} />", elem.index, elem.tag, attr_str),
+            Some(t) => format!("[{}]<{}{} {}>{}", elem.index, elem.tag, attr_str, pos, t),
+            None => format!("[{}]<{}{} {} />", elem.index, elem.tag, attr_str, pos),
         };
 
         output.push_str(&line);
