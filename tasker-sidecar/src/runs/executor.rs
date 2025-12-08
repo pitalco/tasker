@@ -256,13 +256,12 @@ Keep taking actions until the condition above is clearly met.
         // Convert our tools to genai tools
         let tools = self.build_genai_tools();
 
-        // Build initial chat request with system prompt
-        let mut chat_req = ChatRequest::new(vec![ChatMessage::system(SYSTEM_PROMPT)])
-            .with_tools(tools.clone());
+        // Keep conversation history WITHOUT screenshots (text only) to save tokens
+        // Only the CURRENT page state gets a screenshot
+        let mut history: Vec<ChatMessage> = vec![ChatMessage::system(SYSTEM_PROMPT)];
 
-        // Add initial user message with task and screenshot
-        let initial_message = self.build_user_message_with_screenshot(&user_prompt).await;
-        chat_req = chat_req.append_message(initial_message);
+        // Add initial user message (text only for history)
+        history.push(ChatMessage::user(user_prompt.clone()));
 
         let mut step_number = 0;
         let mut first_iteration = true;
@@ -287,11 +286,18 @@ Keep taking actions until the condition above is clearly met.
                 break;
             }
 
-            // For subsequent iterations, take fresh screenshot and add page state RIGHT BEFORE LLM call
-            if !first_iteration {
-                let page_state = self.build_page_state_message(&selector_map).await;
-                chat_req = chat_req.append_message(page_state);
-            }
+            // Build fresh request: history (text-only) + current page state (WITH screenshot)
+            // This way only the LATEST screenshot is sent, not all historical ones
+            let (page_state_text, chat_req) = if first_iteration {
+                // First iteration: use initial prompt + screenshot
+                let screenshot = self.browser.screenshot().await.ok();
+                let req = self.build_request_with_screenshot(&history, &user_prompt, screenshot, &tools);
+                (user_prompt.clone(), req)
+            } else {
+                // Subsequent iterations: get current page state + screenshot
+                let (text, req) = self.build_current_state_request(&history, &selector_map, &tools).await;
+                (text, req)
+            };
             first_iteration = false;
 
             self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
@@ -434,13 +440,17 @@ Keep taking actions until the condition above is clearly met.
                 break;
             }
 
-            // Append tool calls and responses to chat history
-            // (Page state with screenshot will be added at START of next iteration)
-            // Convert UnifiedToolCall back to genai format for chat history
+            // Add to history (text-only, no screenshots):
+            // 1. The page state text we just sent
+            history.push(ChatMessage::user(page_state_text));
+
+            // 2. The assistant's tool calls
             let genai_tool_calls = to_genai_tool_calls(&tool_calls);
-            chat_req = chat_req.append_message(genai_tool_calls);
+            history.push(ChatMessage::from(genai_tool_calls));
+
+            // 3. The tool responses
             for response in tool_responses {
-                chat_req = chat_req.append_message(response);
+                history.push(ChatMessage::from(response));
             }
         }
 
@@ -460,21 +470,57 @@ Keep taking actions until the condition above is clearly met.
             .collect()
     }
 
-    /// Build a user message with text and optional screenshot
-    async fn build_user_message_with_screenshot(&self, text: &str) -> ChatMessage {
-        let mut parts = vec![ContentPart::from_text(text)];
+    /// Build a ChatRequest from history + current message with screenshot
+    fn build_request_with_screenshot(
+        &self,
+        history: &[ChatMessage],
+        current_text: &str,
+        screenshot: Option<String>,
+        tools: &[Tool],
+    ) -> ChatRequest {
+        let mut req = ChatRequest::new(history.to_vec()).with_tools(tools.to_vec());
 
-        // Try to take a screenshot
-        if let Ok(screenshot_base64) = self.browser.screenshot().await {
-            // Add screenshot as binary content
+        // Build current message with optional screenshot
+        let mut parts = vec![ContentPart::from_text(current_text)];
+        if let Some(screenshot_base64) = screenshot {
             parts.push(ContentPart::from_binary_base64(
                 "image/png",
                 screenshot_base64,
                 Some("screenshot.png".to_string()),
             ));
         }
+        req = req.append_message(ChatMessage::user(parts));
+        req
+    }
 
-        ChatMessage::user(parts)
+    /// Build request with current page state (text + screenshot)
+    async fn build_current_state_request(
+        &self,
+        history: &[ChatMessage],
+        selector_map: &Arc<RwLock<SelectorMap>>,
+        tools: &[Tool],
+    ) -> (String, ChatRequest) {
+        let url = self.browser.current_url().await.unwrap_or_default();
+        let title = self.browser.get_title().await.unwrap_or_default();
+
+        // Get DOM extraction result from page
+        let dom_result = self.browser.get_indexed_elements().await.unwrap_or_default();
+
+        // Update the shared selector map for tools
+        *selector_map.write().await = dom_result.selector_map.clone();
+
+        // Build text content
+        let text = UserMessageBuilder::new()
+            .with_browser_state(&url, &title, &dom_result)
+            .build();
+
+        // Take screenshot
+        let screenshot = self.browser.screenshot().await.ok();
+
+        // Build request
+        let req = self.build_request_with_screenshot(history, &text, screenshot, tools);
+
+        (text, req)
     }
 
     /// Call Railway proxy with converted request format
@@ -601,25 +647,6 @@ Keep taking actions until the condition above is clearly met.
         // Make the call and return response directly
         // Tool call extraction happens via extract_railway_tool_calls()
         railway.chat(request).await
-    }
-
-    /// Build a follow-up message with current page state using UserMessageBuilder
-    async fn build_page_state_message(&self, selector_map: &Arc<RwLock<SelectorMap>>) -> ChatMessage {
-        let url = self.browser.current_url().await.unwrap_or_default();
-        let title = self.browser.get_title().await.unwrap_or_default();
-
-        // Get DOM extraction result from page
-        let dom_result = self.browser.get_indexed_elements().await.unwrap_or_default();
-
-        // Update the shared selector map for tools
-        *selector_map.write().await = dom_result.selector_map.clone();
-
-        // Use UserMessageBuilder for formatting
-        let text = UserMessageBuilder::new()
-            .with_browser_state(&url, &title, &dom_result)
-            .build();
-
-        self.build_user_message_with_screenshot(&text).await
     }
 }
 
