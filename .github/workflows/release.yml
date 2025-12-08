@@ -64,15 +64,18 @@ jobs:
           cargo build --release
           cp target/release/tasker-sidecar target/release/tasker-sidecar-x86_64-unknown-linux-gnu
 
-      # Build sidecar for macOS (both architectures for universal binary)
+      # Build sidecar for macOS (universal binary)
       - name: Build sidecar (macOS)
         if: matrix.platform == 'macos-latest'
         run: |
           cd tasker-sidecar
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
-          cp target/aarch64-apple-darwin/release/tasker-sidecar target/release/tasker-sidecar-aarch64-apple-darwin
-          cp target/x86_64-apple-darwin/release/tasker-sidecar target/release/tasker-sidecar-x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/tasker-sidecar \
+            target/x86_64-apple-darwin/release/tasker-sidecar \
+            -output target/release/tasker-sidecar-universal-apple-darwin
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
