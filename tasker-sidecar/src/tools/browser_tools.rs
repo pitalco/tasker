@@ -6,6 +6,39 @@ use super::registry::{Tool, ToolContext, ToolDefinition, ToolResult};
 use crate::runs::RunFile;
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse an integer parameter robustly - handles both integer and string values
+fn parse_int_param(params: &Value, name: &str) -> Option<i32> {
+    // Try as integer first
+    if let Some(i) = params[name].as_i64() {
+        return Some(i as i32);
+    }
+    // Try as string and parse
+    if let Some(s) = params[name].as_str() {
+        if let Ok(i) = s.parse::<i32>() {
+            return Some(i);
+        }
+    }
+    // Try common alternative names for index
+    if name == "index" {
+        // Sometimes LLMs use "element" or "element_index" instead
+        for alt in ["element", "element_index", "idx", "id"] {
+            if let Some(i) = params[alt].as_i64() {
+                return Some(i as i32);
+            }
+            if let Some(s) = params[alt].as_str() {
+                if let Ok(i) = s.parse::<i32>() {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+// ============================================================================
 // Navigation Tools
 // ============================================================================
 
@@ -171,9 +204,12 @@ impl Tool for ClickTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let index = params["index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the element number from the list, e.g. index: 5"
+            )),
+        };
 
         // Look up backend_node_id from selector map
         let selector_map = ctx.selector_map.read().await;
@@ -220,9 +256,12 @@ impl Tool for InputTextTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let index = params["index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the element number from the list, e.g. index: 3"
+            )),
+        };
         let text = params["text"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'text' parameter"))?;
@@ -279,8 +318,7 @@ impl Tool for ScrollTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        if let Some(index) = params["to_element"].as_i64() {
-            let index = index as i32;
+        if let Some(index) = parse_int_param(&params, "to_element") {
             // Look up element from selector map
             let selector_map = ctx.selector_map.read().await;
             let element = match selector_map.get_element_by_index(index) {
@@ -545,9 +583,12 @@ impl Tool for SelectDropdownTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let index = params["index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the dropdown element number from the list."
+            )),
+        };
         let option = params["option"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'option' parameter"))?;
@@ -609,9 +650,12 @@ impl Tool for GetDropdownOptionsTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let index = params["index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))? as i32;
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the dropdown element number from the list."
+            )),
+        };
 
         // Look up element from selector map
         let selector_map = ctx.selector_map.read().await;
@@ -681,9 +725,12 @@ impl Tool for UploadFileTool {
     }
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let index = params["index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'index' parameter"))?;
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the file input element number from the list."
+            )),
+        };
         let file_path = params["file_path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'file_path' parameter"))?;
@@ -728,9 +775,12 @@ impl Tool for SwitchTabTool {
     }
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let tab_index = params["tab_index"]
-            .as_i64()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'tab_index' parameter"))?;
+        let tab_index = match parse_int_param(&params, "tab_index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'tab_index' parameter. Use the tab index (0-based)."
+            )),
+        };
 
         // Tab switching requires access to browser's page list - placeholder
         Ok(ToolResult::error(format!(
