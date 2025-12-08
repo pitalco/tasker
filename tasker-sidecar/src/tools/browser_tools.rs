@@ -1229,6 +1229,12 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(WriteFileTool));
     registry.register(Arc::new(ReplaceInFileTool));
 
+    // Memory
+    use super::memory_tools::{DeleteMemoryTool, RecallMemoriesTool, SaveMemoryTool};
+    registry.register(Arc::new(SaveMemoryTool));
+    registry.register(Arc::new(RecallMemoriesTool));
+    registry.register(Arc::new(DeleteMemoryTool));
+
     // Completion
     registry.register(Arc::new(DoneTool));
 }

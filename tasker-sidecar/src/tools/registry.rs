@@ -9,6 +9,27 @@ use tokio::sync::RwLock;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::runs::RunRepository;
 
+/// A memory/note stored during a run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Memory {
+    /// Optional key for easy reference (e.g., "user_email", "search_count")
+    pub key: Option<String>,
+    /// The memory content
+    pub content: String,
+    /// Optional category (e.g., "observation", "extracted_data")
+    pub category: Option<String>,
+}
+
+impl Memory {
+    pub fn new(content: impl Into<String>, key: Option<String>, category: Option<String>) -> Self {
+        Self {
+            key,
+            content: content.into(),
+            category,
+        }
+    }
+}
+
 /// Tool definition for LLM function calling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -84,6 +105,8 @@ pub struct ToolContext {
     pub selector_map: Arc<RwLock<SelectorMap>>,
     /// Repository for file storage operations
     pub file_repository: Option<Arc<RunRepository>>,
+    /// In-memory storage for notes/memories during this run
+    pub memories: Arc<RwLock<Vec<Memory>>>,
 }
 
 /// Trait for implementing tools

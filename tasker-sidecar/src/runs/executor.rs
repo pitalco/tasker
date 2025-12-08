@@ -220,6 +220,9 @@ Keep taking actions until the condition above is clearly met.
         // Create selector map storage (will be updated before each LLM call)
         let selector_map = Arc::new(RwLock::new(SelectorMap::new()));
 
+        // Create in-memory storage for memories/notes
+        let memories = Arc::new(RwLock::new(Vec::new()));
+
         // Create tool context with file repository access
         let ctx = ToolContext {
             run_id: run_id.clone(),
@@ -227,6 +230,7 @@ Keep taking actions until the condition above is clearly met.
             browser: Arc::clone(&self.browser),
             selector_map: Arc::clone(&selector_map),
             file_repository: Some(Arc::new(self.logger.repository().clone())),
+            memories: Arc::clone(&memories),
         };
 
         // Check if using Tasker Fast (Railway proxy)
@@ -294,8 +298,8 @@ Keep taking actions until the condition above is clearly met.
                 let req = self.build_request_with_screenshot(&history, &user_prompt, screenshot, &tools);
                 (user_prompt.clone(), req)
             } else {
-                // Subsequent iterations: get current page state + screenshot
-                let (text, req) = self.build_current_state_request(&history, &selector_map, &tools).await;
+                // Subsequent iterations: get current page state + screenshot + memories
+                let (text, req) = self.build_current_state_request(&history, &selector_map, &memories, &tools).await;
                 (text, req)
             };
             first_iteration = false;
@@ -493,11 +497,12 @@ Keep taking actions until the condition above is clearly met.
         req
     }
 
-    /// Build request with current page state (text + screenshot)
+    /// Build request with current page state (text + screenshot + memories)
     async fn build_current_state_request(
         &self,
         history: &[ChatMessage],
         selector_map: &Arc<RwLock<SelectorMap>>,
+        memories: &Arc<RwLock<Vec<crate::tools::Memory>>>,
         tools: &[Tool],
     ) -> (String, ChatRequest) {
         let url = self.browser.current_url().await.unwrap_or_default();
@@ -509,8 +514,12 @@ Keep taking actions until the condition above is clearly met.
         // Update the shared selector map for tools
         *selector_map.write().await = dom_result.selector_map.clone();
 
-        // Build text content
+        // Get current memories snapshot
+        let memories_snapshot = memories.read().await;
+
+        // Build text content with memories
         let text = UserMessageBuilder::new()
+            .with_memories(&memories_snapshot)
             .with_browser_state(&url, &title, &dom_result)
             .build();
 

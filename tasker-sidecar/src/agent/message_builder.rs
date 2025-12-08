@@ -1,10 +1,12 @@
 use crate::browser::DOMExtractionResult;
 use crate::models::RecordedAction;
+use crate::tools::Memory;
 
 /// Builds the user message for each LLM turn
 pub struct UserMessageBuilder {
     recorded_workflow: Option<Vec<RecordedAction>>,
     custom_instructions: Option<String>,
+    memories: Vec<Memory>,
     url: String,
     title: String,
     elements_repr: String,
@@ -15,6 +17,7 @@ impl UserMessageBuilder {
         Self {
             recorded_workflow: None,
             custom_instructions: None,
+            memories: Vec::new(),
             url: String::new(),
             title: String::new(),
             elements_repr: String::new(),
@@ -30,6 +33,12 @@ impl UserMessageBuilder {
     /// Set custom instructions
     pub fn with_custom_instructions(mut self, instructions: Option<&str>) -> Self {
         self.custom_instructions = instructions.map(|s| s.to_string());
+        self
+    }
+
+    /// Set the memories for this run
+    pub fn with_memories(mut self, memories: &[Memory]) -> Self {
+        self.memories = memories.to_vec();
         self
     }
 
@@ -62,6 +71,11 @@ impl UserMessageBuilder {
             }
         }
 
+        // Add memories section if present
+        if !self.memories.is_empty() {
+            parts.push(format_memories(&self.memories));
+        }
+
         // Add browser state (always present)
         parts.push(format_browser_state(
             &self.url,
@@ -90,6 +104,30 @@ fn format_recorded_workflow(steps: &[RecordedAction]) -> String {
     }
 
     lines.push("</recorded_workflow>".to_string());
+    lines.join("\n")
+}
+
+/// Format memories as context for the LLM
+fn format_memories(memories: &[Memory]) -> String {
+    let mut lines = Vec::new();
+    lines.push("<memories>".to_string());
+    lines.push("Your saved notes for this run:".to_string());
+
+    for memory in memories {
+        let key_part = memory
+            .key
+            .as_ref()
+            .map(|k| format!(" [{}]", k))
+            .unwrap_or_default();
+        let cat_part = memory
+            .category
+            .as_ref()
+            .map(|c| format!(" ({})", c))
+            .unwrap_or_default();
+        lines.push(format!("- {}{}{}", memory.content, key_part, cat_part));
+    }
+
+    lines.push("</memories>".to_string());
     lines.join("\n")
 }
 
