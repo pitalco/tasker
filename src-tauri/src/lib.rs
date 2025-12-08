@@ -107,10 +107,13 @@ pub fn run() {
             commands::auth::get_auth_token,
             commands::auth::clear_auth_token,
             commands::auth::check_auth_status,
-            commands::auth::send_magic_link,
-            commands::auth::verify_magic_link,
             commands::auth::open_checkout,
             commands::auth::open_customer_portal,
+            // OAuth and email/password auth
+            commands::auth::start_oauth,
+            commands::auth::sign_up_email,
+            commands::auth::sign_in_email,
+            commands::auth::verify_oauth_callback,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

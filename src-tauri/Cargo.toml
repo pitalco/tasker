@@ -56,3 +56,6 @@ open = "5"
 
 # Environment variables from .env files
 dotenvy = "0.15"
+
+# URL encoding for OAuth
+urlencoding = "2.1"

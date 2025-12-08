@@ -59,16 +59,53 @@ class AuthStore {
 		this.hasSubscription = state.has_subscription;
 	}
 
-	async sendMagicLink(email: string): Promise<boolean> {
+	// Start OAuth flow - opens browser to provider
+	async startOAuth(provider: 'google' | 'github'): Promise<boolean> {
 		this.isSigningIn = true;
 		this.error = null;
 
 		try {
-			await authService.sendMagicLink(email);
+			await authService.startOAuth(provider);
 			return true;
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to send magic link';
-			console.error('Failed to send magic link:', e);
+			this.error = e instanceof Error ? e.message : `Failed to start ${provider} sign in`;
+			console.error(`Failed to start ${provider} OAuth:`, e);
+			this.isSigningIn = false;
+			return false;
+		}
+		// Note: isSigningIn stays true until we get the deep link callback
+	}
+
+	// Sign in with email/password
+	async signInEmail(email: string, password: string): Promise<boolean> {
+		this.isSigningIn = true;
+		this.error = null;
+
+		try {
+			const state = await authService.signInEmail(email, password);
+			this.updateFromState(state);
+			return true;
+		} catch (e) {
+			this.error = e instanceof Error ? e.message : 'Invalid email or password';
+			console.error('Failed to sign in with email:', e);
+			return false;
+		} finally {
+			this.isSigningIn = false;
+		}
+	}
+
+	// Sign up with email/password
+	async signUpEmail(email: string, password: string, name?: string): Promise<boolean> {
+		this.isSigningIn = true;
+		this.error = null;
+
+		try {
+			const state = await authService.signUpEmail(email, password, name);
+			this.updateFromState(state);
+			return true;
+		} catch (e) {
+			this.error = e instanceof Error ? e.message : 'Failed to create account';
+			console.error('Failed to sign up with email:', e);
 			return false;
 		} finally {
 			this.isSigningIn = false;
@@ -79,7 +116,7 @@ class AuthStore {
 		// Check for auth callback
 		const token = authService.parseAuthToken(url);
 		if (token) {
-			await this.verifyMagicLink(token);
+			await this.verifyAuthCallback(token);
 			return;
 		}
 
@@ -91,16 +128,17 @@ class AuthStore {
 		}
 	}
 
-	private async verifyMagicLink(token: string) {
+	// Verify auth callback token from deep link
+	private async verifyAuthCallback(token: string) {
 		this.isSigningIn = true;
 		this.error = null;
 
 		try {
-			const state = await authService.verifyMagicLink(token);
+			const state = await authService.verifyOAuthCallback(token);
 			this.updateFromState(state);
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to verify magic link';
-			console.error('Failed to verify magic link:', e);
+			this.error = e instanceof Error ? e.message : 'Failed to verify authentication';
+			console.error('Failed to verify auth callback:', e);
 		} finally {
 			this.isSigningIn = false;
 		}

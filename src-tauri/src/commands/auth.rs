@@ -183,104 +183,6 @@ pub async fn check_auth_status() -> Result<AuthState, String> {
     })
 }
 
-/// Send magic link email
-#[tauri::command]
-pub async fn send_magic_link(email: String) -> Result<(), String> {
-    let client = reqwest::Client::new();
-    let backend_url = get_backend_url();
-    let response = client
-        .post(format!("{}/api/auth/sign-in/magic-link", backend_url))
-        .json(&serde_json::json!({ "email": email }))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to send magic link: {}", e))?;
-
-    if !response.status().is_success() {
-        let error = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to send magic link: {}", error));
-    }
-
-    log::info!("Magic link sent to: {}", email);
-    Ok(())
-}
-
-/// Verify magic link token and get session
-#[tauri::command]
-pub async fn verify_magic_link(token: String) -> Result<AuthState, String> {
-    let client = reqwest::Client::new();
-    let backend_url = get_backend_url();
-    let response = client
-        .post(format!("{}/api/auth/magic-link/verify", backend_url))
-        .json(&serde_json::json!({ "token": token }))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to verify magic link: {}", e))?;
-
-    if !response.status().is_success() {
-        let error = response.text().await.unwrap_or_default();
-        return Err(format!("Invalid or expired magic link: {}", error));
-    }
-
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let session_token = body
-        .get("session")
-        .and_then(|s| s.get("token"))
-        .and_then(|t| t.as_str())
-        .ok_or("Missing session token in response")?;
-
-    let user_id = body
-        .get("user")
-        .and_then(|u| u.get("id"))
-        .and_then(|id| id.as_str())
-        .ok_or("Missing user ID in response")?;
-
-    let email = body
-        .get("user")
-        .and_then(|u| u.get("email"))
-        .and_then(|e| e.as_str())
-        .ok_or("Missing email in response")?;
-
-    // Store credentials
-    store_auth_token(
-        session_token.to_string(),
-        user_id.to_string(),
-        email.to_string(),
-    )
-    .await?;
-
-    // Check subscription status
-    let sub_client = reqwest::Client::new();
-    let sub_response = sub_client
-        .get(format!("{}/subscription/status", backend_url))
-        .header("Authorization", format!("Bearer {}", session_token))
-        .send()
-        .await;
-
-    let has_subscription = if let Ok(resp) = sub_response {
-        if resp.status().is_success() {
-            resp.json::<SubscriptionStatus>()
-                .await
-                .map(|s| s.has_subscription)
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    Ok(AuthState {
-        is_authenticated: true,
-        user_id: Some(user_id.to_string()),
-        email: Some(email.to_string()),
-        has_subscription,
-    })
-}
-
 /// Open Stripe checkout in default browser
 #[tauri::command]
 pub async fn open_checkout() -> Result<(), String> {
@@ -355,4 +257,233 @@ pub async fn open_customer_portal() -> Result<(), String> {
 
     log::info!("Opened customer portal in browser");
     Ok(())
+}
+
+// Helper function to check subscription status
+async fn check_subscription(client: &reqwest::Client, backend_url: &str, token: &str) -> bool {
+    if let Ok(resp) = client
+        .get(format!("{}/subscription/status", backend_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            resp.json::<SubscriptionStatus>()
+                .await
+                .map(|s| s.has_subscription)
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+/// Open browser for OAuth authentication
+#[tauri::command]
+pub async fn start_oauth(provider: String) -> Result<(), String> {
+    let backend_url = get_backend_url();
+    // The callback URL tells better-auth where to redirect after OAuth
+    // This goes to the landing page which then redirects to tasker://
+    let callback_url = "https://automatewithtasker.com/auth/callback";
+
+    let auth_url = format!(
+        "{}/api/auth/sign-in/social?provider={}&callbackURL={}",
+        backend_url,
+        provider,
+        urlencoding::encode(callback_url)
+    );
+
+    // Open in default browser
+    open::that(&auth_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+
+    log::info!("Opened {} OAuth in browser", provider);
+    Ok(())
+}
+
+/// Sign up with email and password
+#[tauri::command]
+pub async fn sign_up_email(email: String, password: String, name: Option<String>) -> Result<AuthState, String> {
+    let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
+
+    let mut body = serde_json::json!({
+        "email": email,
+        "password": password,
+    });
+
+    if let Some(n) = name {
+        body["name"] = serde_json::Value::String(n);
+    }
+
+    let response = client
+        .post(format!("{}/api/auth/sign-up/email", backend_url))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to sign up: {}", e))?;
+
+    if !response.status().is_success() {
+        let error = response.text().await.unwrap_or_default();
+        return Err(format!("Sign up failed: {}", error));
+    }
+
+    // Parse response and store credentials
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let session_token = body
+        .get("session")
+        .and_then(|s| s.get("token"))
+        .and_then(|t| t.as_str())
+        .or_else(|| body.get("token").and_then(|t| t.as_str()))
+        .ok_or("Missing session token in response")?;
+
+    let user_id = body
+        .get("user")
+        .and_then(|u| u.get("id"))
+        .and_then(|id| id.as_str())
+        .ok_or("Missing user ID in response")?;
+
+    let user_email = body
+        .get("user")
+        .and_then(|u| u.get("email"))
+        .and_then(|e| e.as_str())
+        .ok_or("Missing email in response")?;
+
+    // Store credentials
+    store_auth_token(
+        session_token.to_string(),
+        user_id.to_string(),
+        user_email.to_string(),
+    )
+    .await?;
+
+    // Check subscription status
+    let has_subscription = check_subscription(&client, &backend_url, session_token).await;
+
+    log::info!("User signed up: {}", user_email);
+    Ok(AuthState {
+        is_authenticated: true,
+        user_id: Some(user_id.to_string()),
+        email: Some(user_email.to_string()),
+        has_subscription,
+    })
+}
+
+/// Sign in with email and password
+#[tauri::command]
+pub async fn sign_in_email(email: String, password: String) -> Result<AuthState, String> {
+    let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
+
+    let response = client
+        .post(format!("{}/api/auth/sign-in/email", backend_url))
+        .json(&serde_json::json!({
+            "email": email,
+            "password": password,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to sign in: {}", e))?;
+
+    if !response.status().is_success() {
+        let error = response.text().await.unwrap_or_default();
+        return Err(format!("Sign in failed: {}", error));
+    }
+
+    // Parse response and store credentials
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let session_token = body
+        .get("session")
+        .and_then(|s| s.get("token"))
+        .and_then(|t| t.as_str())
+        .or_else(|| body.get("token").and_then(|t| t.as_str()))
+        .ok_or("Missing session token in response")?;
+
+    let user_id = body
+        .get("user")
+        .and_then(|u| u.get("id"))
+        .and_then(|id| id.as_str())
+        .ok_or("Missing user ID in response")?;
+
+    let user_email = body
+        .get("user")
+        .and_then(|u| u.get("email"))
+        .and_then(|e| e.as_str())
+        .ok_or("Missing email in response")?;
+
+    store_auth_token(
+        session_token.to_string(),
+        user_id.to_string(),
+        user_email.to_string(),
+    )
+    .await?;
+
+    let has_subscription = check_subscription(&client, &backend_url, session_token).await;
+
+    log::info!("User signed in: {}", user_email);
+    Ok(AuthState {
+        is_authenticated: true,
+        user_id: Some(user_id.to_string()),
+        email: Some(user_email.to_string()),
+        has_subscription,
+    })
+}
+
+/// Verify OAuth callback token (called after deep link with session token)
+#[tauri::command]
+pub async fn verify_oauth_callback(token: String) -> Result<AuthState, String> {
+    // The token from OAuth callback is the session token directly
+    // We need to validate it by calling the session endpoint
+    let client = reqwest::Client::new();
+    let backend_url = get_backend_url();
+
+    let response = client
+        .get(format!("{}/api/auth/session", backend_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to verify session: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err("Invalid or expired session token".to_string());
+    }
+
+    let session: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let user_id = session
+        .get("user")
+        .and_then(|u| u.get("id"))
+        .and_then(|id| id.as_str())
+        .ok_or("Missing user ID")?;
+
+    let email = session
+        .get("user")
+        .and_then(|u| u.get("email"))
+        .and_then(|e| e.as_str())
+        .ok_or("Missing email")?;
+
+    // Store the session token
+    store_auth_token(token.clone(), user_id.to_string(), email.to_string()).await?;
+
+    let has_subscription = check_subscription(&client, &backend_url, &token).await;
+
+    log::info!("OAuth callback verified for: {}", email);
+    Ok(AuthState {
+        is_authenticated: true,
+        user_id: Some(user_id.to_string()),
+        email: Some(email.to_string()),
+        has_subscription,
+    })
 }

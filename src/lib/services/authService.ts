@@ -20,14 +20,28 @@ export async function checkAuthStatus(): Promise<AuthState> {
 	return invoke<AuthState>('check_auth_status');
 }
 
-// Send magic link email
-export async function sendMagicLink(email: string): Promise<void> {
-	return invoke('send_magic_link', { email });
+// Start OAuth flow - opens browser to provider
+export async function startOAuth(provider: 'google' | 'github'): Promise<void> {
+	return invoke('start_oauth', { provider });
 }
 
-// Verify magic link token (called after deep link callback)
-export async function verifyMagicLink(token: string): Promise<AuthState> {
-	return invoke<AuthState>('verify_magic_link', { token });
+// Sign in with email/password
+export async function signInEmail(email: string, password: string): Promise<AuthState> {
+	return invoke<AuthState>('sign_in_email', { email, password });
+}
+
+// Sign up with email/password
+export async function signUpEmail(
+	email: string,
+	password: string,
+	name?: string
+): Promise<AuthState> {
+	return invoke<AuthState>('sign_up_email', { email, password, name });
+}
+
+// Verify OAuth callback token (called after deep link from OAuth)
+export async function verifyOAuthCallback(token: string): Promise<AuthState> {
+	return invoke<AuthState>('verify_oauth_callback', { token });
 }
 
 // Store token after deep link callback
