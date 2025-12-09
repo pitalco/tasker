@@ -137,7 +137,7 @@ impl AppState {
         // Clean up any recordings associated with this client
         // (In case the client disconnected while recording)
         self.recordings.retain(|session_id, active_recorder| {
-            let keep = active_recorder.client_id.as_ref() != Some(&client_id.to_string());
+            let keep = active_recorder.client_id.as_deref() != Some(client_id);
             if !keep {
                 tracing::info!("Cleaning up orphaned recording session: {}", session_id);
             }
