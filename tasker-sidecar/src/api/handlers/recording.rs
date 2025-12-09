@@ -60,6 +60,7 @@ pub async fn start_recording(
         ActiveRecorder {
             recorder: Arc::clone(&recorder),
             session: initial_session,
+            client_id: request.client_id.clone(),
         },
     );
 
