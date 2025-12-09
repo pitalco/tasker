@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
-use genai::Client;
+use genai::resolver::{AuthData, AuthResolver};
+use genai::{Client, ModelIden};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -274,18 +275,22 @@ Keep taking actions until the condition above is clearly met.
             self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
             Some(RailwayClient::with_token(auth_token))
         } else {
-            // Set up API key for genai providers
-            // Note: set_var is not thread-safe in Rust 1.66+, but genai requires env vars.
-            // This is safe here because we're setting it before creating the client and
-            // the sidecar runs one execution at a time per browser instance.
-            if let Some(ref api_key) = self.config.api_key {
-                set_api_key_env(&self.config.model, api_key);
-            }
             None
         };
 
         // Create genai client (for non-Railway providers)
-        let client = Client::default();
+        // Pass API key directly through AuthResolver instead of using environment variables
+        let client = if let Some(ref api_key) = self.config.api_key {
+            let api_key = api_key.clone();
+            let auth_resolver = AuthResolver::from_resolver_fn(
+                move |_model_iden: ModelIden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
+                    Ok(Some(AuthData::from_single(api_key.clone())))
+                }
+            );
+            Client::builder().with_auth_resolver(auth_resolver).build()
+        } else {
+            Client::default()
+        };
 
         // Convert our tools to genai tools
         let tools = self.build_genai_tools();
@@ -839,41 +844,4 @@ fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String
     }
 }
 
-/// Set the appropriate environment variable for the LLM provider's API key.
-/// This is required because the genai crate reads API keys from environment variables.
-///
-/// Note: std::env::set_var is not thread-safe in Rust 1.66+, but this is acceptable here
-/// because we call it once before creating the client, and the sidecar runs executions
-/// sequentially per browser instance.
-fn set_api_key_env(model: &str, api_key: &str) {
-    use std::sync::Once;
-    static WARN_ONCE: Once = Once::new();
 
-    // Determine the provider from the model name
-    let env_var = if model.starts_with("gpt") || model.contains("openai") {
-        "OPENAI_API_KEY"
-    } else if model.starts_with("gemini") || model.contains("google") {
-        "GOOGLE_API_KEY"
-    } else if model.contains("groq") {
-        "GROQ_API_KEY"
-    } else if model.contains("mistral") {
-        "MISTRAL_API_KEY"
-    } else if model.contains("cohere") {
-        "COHERE_API_KEY"
-    } else {
-        // Default to Anthropic (Claude models)
-        "ANTHROPIC_API_KEY"
-    };
-
-    // Log a warning once about thread safety
-    WARN_ONCE.call_once(|| {
-        tracing::debug!(
-            "Setting {} environment variable for genai provider (single-threaded context)",
-            env_var
-        );
-    });
-
-    // Set the environment variable
-    // SAFETY: This is called before client creation and the sidecar runs executions sequentially
-    std::env::set_var(env_var, api_key);
-}
