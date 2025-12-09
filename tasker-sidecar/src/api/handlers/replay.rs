@@ -140,6 +140,7 @@ pub async fn start_replay(
         provider: Some(provider.to_string()),
         auth_token: request.auth_token.clone(),
         min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
+        capture_screenshots: true, // Enable screenshots by default for debugging
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);

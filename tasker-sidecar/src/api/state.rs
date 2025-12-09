@@ -1,5 +1,7 @@
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{broadcast, Mutex};
 
 use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
@@ -28,6 +30,12 @@ pub enum WsEvent {
     Pong,
 }
 
+/// Connected WebSocket client info
+#[derive(Debug)]
+pub struct ConnectedClient {
+    pub connected_at: Instant,
+}
+
 /// Active recorder with its session
 pub struct ActiveRecorder {
     pub recorder: Arc<BrowserRecorder>,
@@ -41,6 +49,12 @@ pub struct AppState {
 
     /// Active runs: run_id -> run (for tracking running executions)
     pub active_runs: DashMap<String, Run>,
+
+    /// Connected WebSocket clients: client_id -> client info
+    pub connected_clients: DashMap<String, ConnectedClient>,
+
+    /// Total connection count (for metrics)
+    connection_count: AtomicUsize,
 
     /// Runs repository for persistence
     pub runs_repository: Option<RunRepository>,
@@ -72,6 +86,8 @@ impl AppState {
         Self {
             recordings: DashMap::new(),
             active_runs: DashMap::new(),
+            connected_clients: DashMap::new(),
+            connection_count: AtomicUsize::new(0),
             runs_repository,
             ws_broadcast: tx,
             recording_lock: Mutex::new(()),
@@ -85,6 +101,51 @@ impl AppState {
 
     pub fn subscribe(&self) -> broadcast::Receiver<WsEvent> {
         self.ws_broadcast.subscribe()
+    }
+
+    /// Register a WebSocket client connection
+    pub fn client_connected(&self, client_id: &str) {
+        self.connected_clients.insert(
+            client_id.to_string(),
+            ConnectedClient {
+                connected_at: Instant::now(),
+            },
+        );
+        let count = self.connection_count.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::debug!(
+            "Client {} connected (total: {}, active: {})",
+            client_id,
+            count,
+            self.connected_clients.len()
+        );
+    }
+
+    /// Unregister a WebSocket client connection and clean up any associated resources
+    pub fn client_disconnected(&self, client_id: &str) {
+        if let Some((_, client)) = self.connected_clients.remove(client_id) {
+            let duration = client.connected_at.elapsed();
+            tracing::debug!(
+                "Client {} disconnected after {:?} (active: {})",
+                client_id,
+                duration,
+                self.connected_clients.len()
+            );
+        }
+
+        // Clean up any recordings associated with this client
+        // (In case the client disconnected while recording)
+        self.recordings.retain(|session_id, _| {
+            let keep = !session_id.starts_with(client_id);
+            if !keep {
+                tracing::info!("Cleaning up orphaned recording session: {}", session_id);
+            }
+            keep
+        });
+    }
+
+    /// Get the number of active WebSocket connections
+    pub fn active_connection_count(&self) -> usize {
+        self.connected_clients.len()
     }
 }
 

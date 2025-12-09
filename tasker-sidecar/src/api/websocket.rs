@@ -43,6 +43,8 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState>) {
+    // Register the client connection
+    state.client_connected(&client_id);
     tracing::info!("WebSocket connected: {}", client_id);
 
     let (mut sender, mut receiver) = socket.split();
@@ -127,5 +129,7 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
         _ = recv_task => {},
     }
 
+    // Clean up client resources on disconnect
+    state.client_disconnected(&client_id);
     tracing::info!("WebSocket disconnected: {}", client_id);
 }

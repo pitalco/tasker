@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::instrument;
 
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
@@ -114,6 +116,8 @@ pub struct ExecutorConfig {
     pub auth_token: Option<String>,
     /// Minimum delay between LLM calls in milliseconds (rate limiting)
     pub min_llm_delay_ms: u64,
+    /// Whether to capture screenshots after each step (disable for faster execution)
+    pub capture_screenshots: bool,
 }
 
 /// Default minimum delay between LLM calls (2 seconds for rate limit safety)
@@ -129,6 +133,7 @@ impl Default for ExecutorConfig {
             provider: None,
             auth_token: None,
             min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
+            capture_screenshots: true,
         }
     }
 }
@@ -151,6 +156,8 @@ pub struct RunExecutor {
     registry: ToolRegistry,
     logger: RunLogger,
     browser: Arc<BrowserManager>,
+    /// Cancellation token for graceful shutdown
+    cancel_token: CancellationToken,
 }
 
 impl RunExecutor {
@@ -163,10 +170,22 @@ impl RunExecutor {
             registry,
             logger,
             browser,
+            cancel_token: CancellationToken::new(),
         }
     }
 
+    /// Get the cancellation token for external cancellation
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    /// Cancel the running execution
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+
     /// Execute a run
+    #[instrument(skip(self, run), fields(run_id = %run.id, model = %self.config.model))]
     pub async fn execute(&self, run: &Run) -> Result<()> {
         let run_id = &run.id;
 
@@ -256,8 +275,11 @@ Keep taking actions until the condition above is clearly met.
             Some(RailwayClient::with_token(auth_token))
         } else {
             // Set up API key for genai providers
+            // Note: set_var is not thread-safe in Rust 1.66+, but genai requires env vars.
+            // This is safe here because we're setting it before creating the client and
+            // the sidecar runs one execution at a time per browser instance.
             if let Some(ref api_key) = self.config.api_key {
-                unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
+                set_api_key_env(&self.config.model, api_key);
             }
             None
         };
@@ -289,6 +311,13 @@ Keep taking actions until the condition above is clearly met.
 
         // Agent loop
         loop {
+            // Check for cancellation at the start of each iteration
+            if self.cancel_token.is_cancelled() {
+                self.logger.info(run_id, "Run cancelled by user");
+                self.logger.status(run_id, RunStatus::Cancelled, Some("Cancelled by user".to_string()));
+                return Ok(());
+            }
+
             if step_number >= max_steps {
                 self.logger.warn(run_id, format!("Reached maximum steps limit ({})", max_steps));
                 self.logger.status(
@@ -449,8 +478,8 @@ Keep taking actions until the condition above is clearly met.
                     duration_ms,
                 );
 
-                // Take screenshot after action (if browser tool)
-                if is_browser_tool(tool_name) {
+                // Take screenshot after action (if browser tool and screenshots enabled)
+                if self.config.capture_screenshots && is_browser_tool(tool_name) {
                     if let Ok(screenshot) = self.browser.screenshot().await {
                         step.screenshot = Some(screenshot);
                     }
@@ -508,6 +537,29 @@ Keep taking actions until the condition above is clearly met.
                 break;
             }
 
+            // TRUNCATE FIRST: Keep system + initial user + last N complete steps
+            // This prevents memory spikes by truncating BEFORE adding new messages
+            // Step = User (page state) + Assistant (tool calls) + Tool response(s)
+            // CRITICAL: Tool calls and responses MUST stay paired
+            const MAX_HISTORY_STEPS: usize = 10;
+
+            if history.len() > 2 {
+                // Find step boundaries - each step starts with User message after index 1
+                let mut step_starts: Vec<usize> = Vec::new();
+                for i in 2..history.len() {
+                    if matches!(history[i].role, genai::chat::ChatRole::User) {
+                        step_starts.push(i);
+                    }
+                }
+
+                // Keep only last MAX_HISTORY_STEPS (minus 1 to make room for new step)
+                if step_starts.len() >= MAX_HISTORY_STEPS {
+                    let keep_from = step_starts[step_starts.len() - (MAX_HISTORY_STEPS - 1)];
+                    history.drain(2..keep_from);
+                    tracing::debug!("Truncated history, keeping last {} steps", MAX_HISTORY_STEPS - 1);
+                }
+            }
+
             // Add to history (text-only, no screenshots):
             // 1. The page state text we just sent
             history.push(ChatMessage::user(page_state_text));
@@ -519,28 +571,6 @@ Keep taking actions until the condition above is clearly met.
             // 3. The tool responses
             for response in tool_responses {
                 history.push(ChatMessage::from(response));
-            }
-
-            // TRUNCATE: Keep system + initial user + last 10 complete steps
-            // Step = User (page state) + Assistant (tool calls) + Tool response(s)
-            // CRITICAL: Tool calls and responses MUST stay paired
-            const MAX_STEPS: usize = 10;
-
-            if history.len() > 2 {
-                // Find step boundaries - each step starts with User message after index 1
-                let mut step_starts: Vec<usize> = Vec::new();
-                for i in 2..history.len() {
-                    if matches!(history[i].role, genai::chat::ChatRole::User) {
-                        step_starts.push(i);
-                    }
-                }
-
-                // Keep only last MAX_STEPS
-                if step_starts.len() > MAX_STEPS {
-                    let keep_from = step_starts[step_starts.len() - MAX_STEPS];
-                    history.drain(2..keep_from);
-                    tracing::debug!("Truncated history, keeping last {} steps", MAX_STEPS);
-                }
             }
         }
 
@@ -765,17 +795,85 @@ fn is_browser_tool(name: &str) -> bool {
     )
 }
 
-/// Replace {{variable_name}} placeholders in JSON params with actual values
+/// Replace {{variable_name}} placeholders in JSON params with actual values.
+/// This properly traverses the JSON structure instead of doing string replacement,
+/// which prevents issues with special characters in variable values.
 fn resolve_variables(params: &Value, variables: &HashMap<String, String>) -> Value {
     if variables.is_empty() {
         return params.clone();
     }
 
-    let mut json_str = params.to_string();
-    for (name, value) in variables {
-        let pattern = format!("{{{{{}}}}}", name); // {{name}}
-        json_str = json_str.replace(&pattern, value);
-    }
+    resolve_variables_recursive(params, variables)
+}
 
-    serde_json::from_str(&json_str).unwrap_or_else(|_| params.clone())
+/// Recursively resolve variables in a JSON value
+fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String>) -> Value {
+    match value {
+        Value::String(s) => {
+            // Replace {{variable}} patterns in strings
+            let mut result = s.clone();
+            for (name, var_value) in variables {
+                let pattern = format!("{{{{{}}}}}", name); // {{name}}
+                result = result.replace(&pattern, var_value);
+            }
+            Value::String(result)
+        }
+        Value::Object(map) => {
+            // Recursively process object values
+            Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), resolve_variables_recursive(v, variables)))
+                    .collect()
+            )
+        }
+        Value::Array(arr) => {
+            // Recursively process array elements
+            Value::Array(
+                arr.iter()
+                    .map(|v| resolve_variables_recursive(v, variables))
+                    .collect()
+            )
+        }
+        // Numbers, bools, and null pass through unchanged
+        _ => value.clone(),
+    }
+}
+
+/// Set the appropriate environment variable for the LLM provider's API key.
+/// This is required because the genai crate reads API keys from environment variables.
+///
+/// Note: std::env::set_var is not thread-safe in Rust 1.66+, but this is acceptable here
+/// because we call it once before creating the client, and the sidecar runs executions
+/// sequentially per browser instance.
+fn set_api_key_env(model: &str, api_key: &str) {
+    use std::sync::Once;
+    static WARN_ONCE: Once = Once::new();
+
+    // Determine the provider from the model name
+    let env_var = if model.starts_with("gpt") || model.contains("openai") {
+        "OPENAI_API_KEY"
+    } else if model.starts_with("gemini") || model.contains("google") {
+        "GOOGLE_API_KEY"
+    } else if model.contains("groq") {
+        "GROQ_API_KEY"
+    } else if model.contains("mistral") {
+        "MISTRAL_API_KEY"
+    } else if model.contains("cohere") {
+        "COHERE_API_KEY"
+    } else {
+        // Default to Anthropic (Claude models)
+        "ANTHROPIC_API_KEY"
+    };
+
+    // Log a warning once about thread safety
+    WARN_ONCE.call_once(|| {
+        tracing::debug!(
+            "Setting {} environment variable for genai provider (single-threaded context)",
+            env_var
+        );
+    });
+
+    // Set the environment variable
+    // SAFETY: This is called before client creation and the sidecar runs executions sequentially
+    std::env::set_var(env_var, api_key);
 }

@@ -30,6 +30,14 @@ impl RunRepository {
         let db_path = get_db_path()?;
         let conn = Connection::open(&db_path)?;
 
+        // Enable WAL mode for better concurrent read performance
+        // WAL allows readers and writers to operate concurrently
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA busy_timeout=5000;"
+        )?;
+
         let repo = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -726,6 +734,8 @@ impl Clone for RunRepository {
     }
 }
 
-// Make RunRepository thread-safe
-unsafe impl Send for RunRepository {}
-unsafe impl Sync for RunRepository {}
+// RunRepository is automatically Send+Sync because:
+// - Arc<T> is Send+Sync when T is Send+Sync
+// - Mutex<T> is Send+Sync when T is Send
+// - rusqlite::Connection is Send
+// No unsafe impl needed!
