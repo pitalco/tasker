@@ -1,6 +1,6 @@
 [package]
 name = "tasker"
-version = "0.1.0"
+version = "0.1.2"
 description = "Browser Automation Recording & Replay"
 authors = ["you"]
 license = "MIT"
