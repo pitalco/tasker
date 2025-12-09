@@ -847,6 +847,9 @@ fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String
 /// 2. Gemini: Models starting with "gemini-" 
 /// 3. Anthropic: Models starting with "claude-"
 ///
+/// Note: TaskerFast is not included here because it uses a separate Railway proxy client
+/// and doesn't require API key environment variable setup.
+///
 /// This uses exact prefix matching to avoid false positives (e.g., "my-groq-like-model"
 /// won't match any provider).
 fn detect_provider_from_model(model: &str) -> Option<LLMProvider> {
@@ -879,6 +882,9 @@ fn detect_provider_from_model(model: &str) -> Option<LLMProvider> {
 ///
 /// Provider is detected from the model name using precise prefix matching.
 /// If no provider can be detected, defaults to Anthropic.
+///
+/// Note: This function is only called for genai providers (OpenAI, Gemini, Anthropic).
+/// TaskerFast uses a separate Railway proxy client and doesn't call this function.
 ///
 /// Note: std::env::set_var is not thread-safe in Rust 1.66+, but this is acceptable here
 /// because we call it once before creating the client, and the sidecar runs executions
