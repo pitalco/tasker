@@ -14,7 +14,7 @@ use tracing::instrument;
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
-use crate::llm::{LLMProvider, RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse};
+use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse};
 
 /// Unified tool call representation that works with both genai and Railway
 #[derive(Debug, Clone)]
@@ -842,76 +842,4 @@ fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String
         // Numbers, bools, and null pass through unchanged
         _ => value.clone(),
     }
-}
-
-
-/// Detect the LLM provider from the model name using precise prefix matching.
-/// Returns the detected provider or None if no provider can be determined.
-///
-/// Provider detection follows these rules:
-/// 1. OpenAI: Models starting with "gpt-", "o1-", "o3-", or "text-"
-/// 2. Gemini: Models starting with "gemini-" 
-/// 3. Anthropic: Models starting with "claude-"
-///
-/// Note: TaskerFast is not included here because it uses a separate Railway proxy client
-/// and doesn't require API key environment variable setup.
-///
-/// This uses exact prefix matching to avoid false positives (e.g., "my-groq-like-model"
-/// won't match any provider).
-fn detect_provider_from_model(model: &str) -> Option<LLMProvider> {
-    // Use lowercase for case-insensitive matching
-    let model_lower = model.to_lowercase();
-    
-    // OpenAI models: gpt-*, o1-*, o3-*, text-*
-    if model_lower.starts_with("gpt-") 
-        || model_lower.starts_with("o1-") 
-        || model_lower.starts_with("o3-")
-        || model_lower.starts_with("text-") {
-        return Some(LLMProvider::OpenAI);
-    }
-    
-    // Gemini models: gemini-*
-    if model_lower.starts_with("gemini-") {
-        return Some(LLMProvider::Gemini);
-    }
-    
-    // Anthropic models: claude-*
-    if model_lower.starts_with("claude-") {
-        return Some(LLMProvider::Anthropic);
-    }
-    
-    None
-}
-
-/// Set the appropriate environment variable for the LLM provider's API key.
-/// This is required because the genai crate reads API keys from environment variables.
-///
-/// Provider is detected from the model name using precise prefix matching.
-/// If no provider can be detected, defaults to Anthropic.
-///
-/// Note: This function is only called for genai providers (OpenAI, Gemini, Anthropic).
-/// TaskerFast uses a separate Railway proxy client and doesn't call this function.
-///
-/// Note: std::env::set_var is not thread-safe in Rust 1.66+, but this is acceptable here
-/// because we call it once before creating the client, and the sidecar runs executions
-/// sequentially per browser instance.
-fn set_api_key_env(model: &str, api_key: &str) {
-    use std::sync::Once;
-    static WARN_ONCE: Once = Once::new();
-
-    // Detect the provider from the model name
-    let provider = detect_provider_from_model(model).unwrap_or(LLMProvider::Anthropic);
-    let env_var = provider.api_key_env_var();
-
-    // Log a warning once about thread safety
-    WARN_ONCE.call_once(|| {
-        tracing::debug!(
-            "Setting {} environment variable for genai provider (single-threaded context)",
-            env_var
-        );
-    });
-
-    // Set the environment variable
-    // SAFETY: This is called before client creation and the sidecar runs executions sequentially
-    std::env::set_var(env_var, api_key);
 }
