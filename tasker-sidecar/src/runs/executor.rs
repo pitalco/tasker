@@ -340,13 +340,24 @@ Keep taking actions until the condition above is clearly met.
                 let mut backoff_ms = INITIAL_BACKOFF_MS;
 
                 loop {
+                    // 120s timeout for slow providers (e.g., Novita/Qwen VL)
                     let result = if let Some(ref railway) = railway_client {
-                        self.call_railway(railway, &chat_req, &tools).await
-                            .map(LLMResponse::Railway)
+                        tokio::time::timeout(
+                            Duration::from_secs(120),
+                            self.call_railway(railway, &chat_req, &tools)
+                        )
+                        .await
+                        .map_err(|_| anyhow!("LLM request timeout after 120s"))?
+                        .map(LLMResponse::Railway)
                     } else {
-                        client.exec_chat(&self.config.model, chat_req.clone(), None).await
-                            .map(LLMResponse::Genai)
-                            .map_err(|e| anyhow!("{}", e))
+                        tokio::time::timeout(
+                            Duration::from_secs(120),
+                            client.exec_chat(&self.config.model, chat_req.clone(), None)
+                        )
+                        .await
+                        .map_err(|_| anyhow!("LLM request timeout after 120s"))?
+                        .map(LLMResponse::Genai)
+                        .map_err(|e| anyhow!("{}", e))
                     };
 
                     match result {
