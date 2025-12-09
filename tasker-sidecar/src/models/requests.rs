@@ -13,6 +13,9 @@ pub struct StartRecordingRequest {
     pub viewport_width: i32,
     #[serde(default = "default_viewport_height")]
     pub viewport_height: i32,
+    /// Optional client ID for tracking which client started the recording
+    /// Used for cleanup when client disconnects
+    pub client_id: Option<String>,
 }
 
 fn default_viewport_width() -> i32 {

@@ -40,6 +40,8 @@ pub struct ConnectedClient {
 pub struct ActiveRecorder {
     pub recorder: Arc<BrowserRecorder>,
     pub session: RecordingSession,
+    /// Optional client ID that started this recording
+    pub client_id: Option<String>,
 }
 
 /// Shared application state
@@ -134,8 +136,8 @@ impl AppState {
 
         // Clean up any recordings associated with this client
         // (In case the client disconnected while recording)
-        self.recordings.retain(|session_id, _| {
-            let keep = !session_id.starts_with(client_id);
+        self.recordings.retain(|session_id, active_recorder| {
+            let keep = active_recorder.client_id.as_ref() != Some(&client_id.to_string());
             if !keep {
                 tracing::info!("Cleaning up orphaned recording session: {}", session_id);
             }
