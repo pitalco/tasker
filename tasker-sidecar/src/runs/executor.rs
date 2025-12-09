@@ -280,7 +280,7 @@ Keep taking actions until the condition above is clearly met.
 
         // Create genai client (for non-Railway providers)
         // Pass API key directly through AuthResolver instead of using environment variables
-        let client = if let Some(ref api_key) = self.config.api_key {
+        let client = if let Some(api_key) = &self.config.api_key {
             let api_key = api_key.clone();
             let auth_resolver = AuthResolver::from_resolver_fn(
                 move |_model_iden: ModelIden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
