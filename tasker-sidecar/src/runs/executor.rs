@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
-use genai::Client;
+use genai::resolver::{AuthData, AuthResolver};
+use genai::{Client, ModelIden};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -274,18 +275,22 @@ Keep taking actions until the condition above is clearly met.
             self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
             Some(RailwayClient::with_token(auth_token))
         } else {
-            // Set up API key for genai providers
-            // Note: set_var is not thread-safe in Rust 1.66+, but genai requires env vars.
-            // This is safe here because we're setting it before creating the client and
-            // the sidecar runs one execution at a time per browser instance.
-            if let Some(ref api_key) = self.config.api_key {
-                set_api_key_env(&self.config.model, api_key);
-            }
             None
         };
 
         // Create genai client (for non-Railway providers)
-        let client = Client::default();
+        // Pass API key directly through AuthResolver instead of using environment variables
+        let client = if let Some(api_key) = &self.config.api_key {
+            let api_key = api_key.clone();
+            let auth_resolver = AuthResolver::from_resolver_fn(
+                move |_model_iden: ModelIden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
+                    Ok(Some(AuthData::from_single(api_key.clone())))
+                }
+            );
+            Client::builder().with_auth_resolver(auth_resolver).build()
+        } else {
+            Client::default()
+        };
 
         // Convert our tools to genai tools
         let tools = self.build_genai_tools();
@@ -838,6 +843,7 @@ fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String
         _ => value.clone(),
     }
 }
+
 
 /// Detect the LLM provider from the model name using precise prefix matching.
 /// Returns the detected provider or None if no provider can be determined.
