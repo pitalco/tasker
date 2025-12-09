@@ -106,7 +106,7 @@ pub async fn start_replay(
             "google" | "gemini" => "GEMINI_API_KEY",
             _ => "ANTHROPIC_API_KEY",
         };
-        std::env::set_var(env_var, key);
+        unsafe { std::env::set_var(env_var, key) };
     }
 
     // Create browser manager
@@ -139,6 +139,7 @@ pub async fn start_replay(
         headless: request.headless,
         provider: Some(provider.to_string()),
         auth_token: request.auth_token.clone(),
+        min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);

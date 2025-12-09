@@ -10,6 +10,8 @@ pub struct UserMessageBuilder {
     url: String,
     title: String,
     elements_repr: String,
+    step_number: Option<usize>,
+    max_steps: Option<usize>,
 }
 
 impl UserMessageBuilder {
@@ -21,7 +23,16 @@ impl UserMessageBuilder {
             url: String::new(),
             title: String::new(),
             elements_repr: String::new(),
+            step_number: None,
+            max_steps: None,
         }
+    }
+
+    /// Set the current step number and max steps
+    pub fn with_step_info(mut self, step_number: usize, max_steps: usize) -> Self {
+        self.step_number = Some(step_number);
+        self.max_steps = Some(max_steps);
+        self
     }
 
     /// Set the recorded workflow as hints
@@ -81,6 +92,8 @@ impl UserMessageBuilder {
             &self.url,
             &self.title,
             &self.elements_repr,
+            self.step_number,
+            self.max_steps,
         ));
 
         parts.join("\n\n")
@@ -132,10 +145,20 @@ fn format_memories(memories: &[Memory]) -> String {
 }
 
 /// Format browser state with indexed elements
-fn format_browser_state(url: &str, title: &str, elements_repr: &str) -> String {
+fn format_browser_state(
+    url: &str,
+    title: &str,
+    elements_repr: &str,
+    step_number: Option<usize>,
+    max_steps: Option<usize>,
+) -> String {
+    let step_info = match (step_number, max_steps) {
+        (Some(step), Some(max)) => format!("\nStep: {}/{}", step, max),
+        _ => String::new(),
+    };
     format!(
-        "<browser_state>\nURL: {}\nTitle: {}\n\nInteractive Elements:\n{}</browser_state>",
-        url, title, elements_repr
+        "<browser_state>\nURL: {}\nTitle: {}{}\n\nInteractive Elements:\n{}</browser_state>",
+        url, title, step_info, elements_repr
     )
 }
 

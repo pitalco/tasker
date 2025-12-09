@@ -158,6 +158,9 @@ fn build_layout_lookup(snapshot: &Option<serde_json::Value>) -> HashMap<BackendN
                                                 layout.is_clickable = true;
                                             }
                                         }
+                                        "pointer-events" => {
+                                            layout.pointer_events = Some(value.to_string());
+                                        }
                                         _ => {}
                                     }
                                 }

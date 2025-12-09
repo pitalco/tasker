@@ -88,6 +88,7 @@ pub struct LayoutData {
     pub display: Option<String>,
     pub visibility: Option<String>,
     pub opacity: Option<String>,
+    pub pointer_events: Option<String>,
 }
 
 impl LayoutData {
@@ -107,6 +108,12 @@ impl LayoutData {
         // Check opacity
         if let Some(opacity) = &self.opacity {
             if opacity == "0" {
+                return false;
+            }
+        }
+        // Check pointer-events: none (element cannot receive clicks)
+        if let Some(ref pe) = self.pointer_events {
+            if pe == "none" {
                 return false;
             }
         }

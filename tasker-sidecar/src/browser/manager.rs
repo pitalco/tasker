@@ -3,8 +3,9 @@ use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::dom::{
     BackendNodeId as CdpBackendNodeId, DescribeNodeParams, FocusParams, GetBoxModelParams,
-    ScrollIntoViewIfNeededParams,
+    ResolveNodeParams, ScrollIntoViewIfNeededParams,
 };
+use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType,
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
@@ -25,7 +26,10 @@ use crate::models::Viewport;
 /// Manages browser lifecycle and page connections
 pub struct BrowserManager {
     browser: Arc<Mutex<Option<Browser>>>,
-    page: Arc<Mutex<Option<Page>>>,
+    /// Multiple tabs/pages
+    pages: Arc<Mutex<Vec<Page>>>,
+    /// Currently active tab index
+    active_tab: Arc<Mutex<usize>>,
     /// Lock to prevent concurrent browser launches (race condition fix)
     launch_lock: tokio::sync::Mutex<()>,
 }
@@ -34,7 +38,8 @@ impl BrowserManager {
     pub fn new() -> Self {
         Self {
             browser: Arc::new(Mutex::new(None)),
-            page: Arc::new(Mutex::new(None)),
+            pages: Arc::new(Mutex::new(Vec::new())),
+            active_tab: Arc::new(Mutex::new(0)),
             launch_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -163,19 +168,99 @@ impl BrowserManager {
 
         // Store browser and page
         *self.browser.lock().await = Some(browser);
-        *self.page.lock().await = Some(page);
+        let mut pages = self.pages.lock().await;
+        pages.clear(); // Clear any old pages
+        pages.push(page);
+        *self.active_tab.lock().await = 0;
 
         tracing::info!("Browser launched (single window)");
         Ok(())
     }
 
+    /// Get the active page (internal helper)
+    async fn get_active_page(&self) -> Result<Page> {
+        let pages = self.pages.lock().await;
+        let active = *self.active_tab.lock().await;
+        pages.get(active)
+            .cloned()
+            .ok_or_else(|| anyhow!("No active tab (index {} of {} tabs)", active, pages.len()))
+    }
+
+    /// Open a new tab and switch to it
+    pub async fn new_tab(&self, url: &str) -> Result<usize> {
+        let browser_guard = self.browser.lock().await;
+        let browser = browser_guard.as_ref().ok_or_else(|| anyhow!("No browser running"))?;
+
+        let page = browser.new_page(url).await
+            .map_err(|e| anyhow!("Failed to create new tab: {}", e))?;
+
+        let mut pages = self.pages.lock().await;
+        pages.push(page);
+        let tab_index = pages.len() - 1;
+        drop(pages);
+
+        *self.active_tab.lock().await = tab_index;
+        tracing::info!("Opened new tab {} at {}", tab_index, url);
+        Ok(tab_index)
+    }
+
+    /// Switch to tab by index
+    pub async fn switch_tab(&self, index: usize) -> Result<()> {
+        let pages = self.pages.lock().await;
+        if index >= pages.len() {
+            return Err(anyhow!("Tab index {} out of range (have {} tabs)", index, pages.len()));
+        }
+        drop(pages);
+
+        *self.active_tab.lock().await = index;
+        tracing::info!("Switched to tab {}", index);
+        Ok(())
+    }
+
+    /// Close tab by index
+    pub async fn close_tab(&self, index: usize) -> Result<()> {
+        let mut pages = self.pages.lock().await;
+        if index >= pages.len() {
+            return Err(anyhow!("Tab index {} out of range", index));
+        }
+        if pages.len() == 1 {
+            return Err(anyhow!("Cannot close last tab"));
+        }
+
+        let page = pages.remove(index);
+        let _ = page.close().await;
+
+        // Adjust active tab if needed
+        let mut active = self.active_tab.lock().await;
+        if *active >= pages.len() {
+            *active = pages.len() - 1;
+        }
+
+        tracing::info!("Closed tab {}, active is now {}", index, *active);
+        Ok(())
+    }
+
+    /// List open tabs (returns tab index and URL)
+    pub async fn list_tabs(&self) -> Result<Vec<(usize, String)>> {
+        let pages = self.pages.lock().await;
+        let mut tabs = Vec::new();
+        for (i, page) in pages.iter().enumerate() {
+            let url = page.url().await
+                .map_err(|e| anyhow!("Failed to get URL for tab {}: {}", i, e))?
+                .unwrap_or_default();
+            tabs.push((i, url));
+        }
+        Ok(tabs)
+    }
+
+    /// Get active tab index
+    pub async fn active_tab_index(&self) -> usize {
+        *self.active_tab.lock().await
+    }
+
     /// Get current page URL
     pub async fn current_url(&self) -> Result<String> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         page.url()
             .await
             .map_err(|e| anyhow!("Failed to get URL: {}", e))?
@@ -184,11 +269,7 @@ impl BrowserManager {
 
     /// Take a screenshot of the current page
     pub async fn screenshot(&self) -> Result<String> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         let screenshot = page
             .screenshot(
                 chromiumoxide::page::ScreenshotParams::builder()
@@ -203,11 +284,7 @@ impl BrowserManager {
 
     /// Get the DOM content of the page
     pub async fn get_dom(&self) -> Result<String> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         let html = page
             .content()
             .await
@@ -218,11 +295,7 @@ impl BrowserManager {
 
     /// Navigate to a URL
     pub async fn navigate(&self, url: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         page.goto(url)
             .await
             .map_err(|e| anyhow!("Failed to navigate to {}: {}", url, e))?;
@@ -232,10 +305,7 @@ impl BrowserManager {
 
     /// Scroll the page using CDP mouse wheel events (more reliable than JS)
     pub async fn scroll(&self, x: i32, y: i32) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // Use CDP Input.dispatchMouseEvent with mouseWheel type
         let scroll_event = DispatchMouseEventParams {
@@ -265,11 +335,7 @@ impl BrowserManager {
 
     /// Execute JavaScript and return result
     pub async fn evaluate(&self, script: &str) -> Result<serde_json::Value> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         let result = page
             .evaluate(script)
             .await
@@ -282,21 +348,45 @@ impl BrowserManager {
 
     /// Get indexed interactive elements using CDP-based extraction
     /// Returns elements with backend_node_id for stable interaction
+    /// Waits for page to be ready and retries if no elements found
     pub async fn get_indexed_elements(&self) -> Result<DOMExtractionResult> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
-        cdp_dom::extract_dom(page).await
+        // Wait for document.readyState to be "complete" (max 5 seconds)
+        for _ in 0..50 {
+            let ready_state: String = page
+                .evaluate("document.readyState")
+                .await
+                .map(|v| v.into_value().unwrap_or_default())
+                .unwrap_or_default();
+
+            if ready_state == "complete" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Extract elements, retry if empty (handles dynamic content)
+        for attempt in 0..5 {
+            let result = cdp_dom::extract_dom(&page).await?;
+
+            if !result.selector_map.ordered_elements.is_empty() {
+                return Ok(result);
+            }
+
+            // Wait longer on each retry (100ms, 200ms, 300ms, 400ms)
+            if attempt < 4 {
+                tokio::time::sleep(Duration::from_millis((attempt as u64 + 1) * 100)).await;
+            }
+        }
+
+        // Return last result even if empty (let caller handle it)
+        cdp_dom::extract_dom(&page).await
     }
 
     /// Click element by backend_node_id with fallback strategies
     pub async fn click_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // First, try to scroll element into view
         let scroll_params = ScrollIntoViewIfNeededParams {
@@ -307,6 +397,9 @@ impl BrowserManager {
         };
         let _ = page.execute(scroll_params).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Highlight element with yellow flickering border before clicking
+        self.highlight_element(&page, backend_id).await;
 
         // Try geometry-based click first (GetBoxModel)
         let box_params = GetBoxModelParams {
@@ -374,9 +467,6 @@ impl BrowserManager {
                 // Fallback: Use JavaScript click via Runtime.callFunctionOn
                 tracing::debug!("Box model failed for {}, trying JS click fallback: {}", backend_id, box_err);
 
-                use chromiumoxide::cdp::browser_protocol::dom::ResolveNodeParams;
-                use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
-
                 // Resolve backend_node_id to remote object
                 let resolve_params = ResolveNodeParams {
                     node_id: None,
@@ -406,12 +496,58 @@ impl BrowserManager {
         }
     }
 
+    /// Highlight element with yellow flickering border (visual feedback before click)
+    async fn highlight_element(&self, page: &Page, backend_id: BackendNodeId) {
+        // Resolve backend_node_id to JavaScript object
+        let resolve_params = ResolveNodeParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_group: Some("highlight".to_string()),
+            execution_context_id: None,
+        };
+
+        if let Ok(result) = page.execute(resolve_params).await {
+            if let Some(object_id) = result.result.object.object_id {
+                let highlight_js = r#"
+                function() {
+                    const orig = {
+                        outline: this.style.outline,
+                        outlineOffset: this.style.outlineOffset
+                    };
+
+                    this.style.outline = '3px solid yellow';
+                    this.style.outlineOffset = '2px';
+
+                    let count = 0;
+                    const flicker = setInterval(() => {
+                        this.style.outlineColor = count % 2 === 0 ? 'yellow' : 'transparent';
+                        count++;
+                        if (count >= 6) {
+                            clearInterval(flicker);
+                            this.style.outline = orig.outline;
+                            this.style.outlineOffset = orig.outlineOffset;
+                        }
+                    }, 100);
+                }
+                "#;
+
+                let call_params = CallFunctionOnParams::builder()
+                    .object_id(object_id)
+                    .function_declaration(highlight_js)
+                    .build();
+
+                if let Ok(params) = call_params {
+                    let _ = page.execute(params).await;
+                    // Wait for highlight to be visible (600ms for 6 flickers @ 100ms each)
+                    tokio::time::sleep(Duration::from_millis(650)).await;
+                }
+            }
+        }
+    }
+
     /// Focus element by backend_node_id
     pub async fn focus_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         let params = FocusParams {
             node_id: None,
@@ -425,6 +561,97 @@ impl BrowserManager {
         Ok(())
     }
 
+    /// Clear an input field by backend_node_id (select all + delete)
+    pub async fn clear_input_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
+        // Click to focus (works on any clickable element, not just natively focusable ones)
+        self.click_by_backend_id(backend_id).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let page = self.get_active_page().await?;
+
+        // Select all (Ctrl+A)
+        let ctrl_a_down = DispatchKeyEventParams {
+            r#type: DispatchKeyEventType::KeyDown,
+            modifiers: Some(2), // Ctrl modifier
+            key: Some("a".to_string()),
+            code: Some("KeyA".to_string()),
+            windows_virtual_key_code: Some(65),
+            text: None,
+            unmodified_text: None,
+            key_identifier: None,
+            native_virtual_key_code: None,
+            auto_repeat: None,
+            is_keypad: None,
+            is_system_key: None,
+            location: None,
+            timestamp: None,
+            commands: None,
+        };
+        page.execute(ctrl_a_down).await.ok();
+
+        let ctrl_a_up = DispatchKeyEventParams {
+            r#type: DispatchKeyEventType::KeyUp,
+            modifiers: Some(2),
+            key: Some("a".to_string()),
+            code: Some("KeyA".to_string()),
+            windows_virtual_key_code: Some(65),
+            text: None,
+            unmodified_text: None,
+            key_identifier: None,
+            native_virtual_key_code: None,
+            auto_repeat: None,
+            is_keypad: None,
+            is_system_key: None,
+            location: None,
+            timestamp: None,
+            commands: None,
+        };
+        page.execute(ctrl_a_up).await.ok();
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // Delete the selection
+        let delete_down = DispatchKeyEventParams {
+            r#type: DispatchKeyEventType::KeyDown,
+            modifiers: None,
+            key: Some("Backspace".to_string()),
+            code: Some("Backspace".to_string()),
+            windows_virtual_key_code: Some(8),
+            text: None,
+            unmodified_text: None,
+            key_identifier: None,
+            native_virtual_key_code: None,
+            auto_repeat: None,
+            is_keypad: None,
+            is_system_key: None,
+            location: None,
+            timestamp: None,
+            commands: None,
+        };
+        page.execute(delete_down).await.ok();
+
+        let delete_up = DispatchKeyEventParams {
+            r#type: DispatchKeyEventType::KeyUp,
+            modifiers: None,
+            key: Some("Backspace".to_string()),
+            code: Some("Backspace".to_string()),
+            windows_virtual_key_code: Some(8),
+            text: None,
+            unmodified_text: None,
+            key_identifier: None,
+            native_virtual_key_code: None,
+            auto_repeat: None,
+            is_keypad: None,
+            is_system_key: None,
+            location: None,
+            timestamp: None,
+            commands: None,
+        };
+        page.execute(delete_up).await.ok();
+
+        Ok(())
+    }
+
     /// Type text into element by backend_node_id
     pub async fn type_by_backend_id(&self, backend_id: BackendNodeId, text: &str) -> Result<()> {
         // First focus the element
@@ -434,10 +661,7 @@ impl BrowserManager {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Type using keyboard events
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // Use insertText for reliable text input
         use chromiumoxide::cdp::browser_protocol::input::{InsertTextParams};
@@ -453,10 +677,7 @@ impl BrowserManager {
 
     /// Press a key using CDP Input.dispatchKeyEvent (more reliable than JS events)
     pub async fn press_key(&self, key: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // Map key names to CDP key codes and text
         let (key_code, code, text, key_name) = match key.to_lowercase().as_str() {
@@ -520,10 +741,7 @@ impl BrowserManager {
 
     /// Scroll element into view by backend_node_id
     pub async fn scroll_to_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         let params = ScrollIntoViewIfNeededParams {
             node_id: None,
@@ -545,10 +763,7 @@ impl BrowserManager {
         self.scroll_to_backend_id(backend_id).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // Resolve backend_node_id to remote object
         use chromiumoxide::cdp::browser_protocol::dom::ResolveNodeParams;
@@ -622,10 +837,7 @@ impl BrowserManager {
 
     /// Get element info by backend_node_id
     pub async fn describe_node(&self, backend_id: BackendNodeId) -> Result<serde_json::Value> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         let params = DescribeNodeParams {
             node_id: None,
@@ -651,10 +863,7 @@ impl BrowserManager {
     /// Set up a CDP binding for instant event capture (no polling!)
     /// Returns an event stream that receives EventBindingCalled events
     pub async fn setup_event_binding(&self, binding_name: &str) -> Result<EventStream<EventBindingCalled>> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         // Add the binding so JavaScript can call it
         page.execute(AddBindingParams::new(binding_name))
@@ -672,10 +881,7 @@ impl BrowserManager {
     /// Set up a listener for page navigation events
     /// Returns an event stream that receives EventFrameNavigated events
     pub async fn setup_navigation_listener(&self) -> Result<EventStream<EventFrameNavigated>> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         let event_stream = page.event_listener::<EventFrameNavigated>().await
             .map_err(|e| anyhow!("Failed to create navigation listener: {}", e))?;
@@ -687,10 +893,7 @@ impl BrowserManager {
     /// Add a script to run on every new document (persists across navigations)
     /// This is critical for recording - ensures the script survives page navigations
     pub async fn add_script_on_new_document(&self, script: &str) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
+        let page = self.get_active_page().await?;
 
         let params = AddScriptToEvaluateOnNewDocumentParams::new(script.to_string());
         page.execute(params)
@@ -704,11 +907,7 @@ impl BrowserManager {
     /// Bring the browser window to the front (restore from minimized)
     /// Call this after recording setup is complete so user can start interacting
     pub async fn bring_to_front(&self) -> Result<()> {
-        let page_guard = self.page.lock().await;
-        let page = page_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No page available"))?;
-
+        let page = self.get_active_page().await?;
         page.bring_to_front()
             .await
             .map_err(|e| anyhow!("Failed to bring browser to front: {}", e))?;
@@ -719,11 +918,11 @@ impl BrowserManager {
 
     /// Close the browser
     pub async fn close(&self) -> Result<()> {
-        let mut page_guard = self.page.lock().await;
+        let mut pages = self.pages.lock().await;
         let mut browser_guard = self.browser.lock().await;
 
-        // Close page first
-        if let Some(page) = page_guard.take() {
+        // Close all pages first
+        for page in pages.drain(..) {
             let _ = page.close().await;
         }
 
@@ -732,13 +931,14 @@ impl BrowserManager {
             let _ = browser.close().await;
         }
 
+        *self.active_tab.lock().await = 0;
         tracing::info!("Browser closed");
         Ok(())
     }
 
     /// Get the underlying page for advanced operations
     pub async fn page(&self) -> Option<Page> {
-        self.page.lock().await.clone()
+        self.get_active_page().await.ok()
     }
 
     /// Click element by CSS selector

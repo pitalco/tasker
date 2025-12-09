@@ -215,10 +215,14 @@ impl Tool for ClickTool {
         let selector_map = ctx.selector_map.read().await;
         let backend_id = match selector_map.get_backend_id(index) {
             Some(id) => id,
-            None => return Ok(ToolResult::error(format!(
-                "Element index {} not found. Valid indices: 1-{}",
-                index, selector_map.len()
-            ))),
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
         };
         drop(selector_map); // Release read lock before async operations
 
@@ -237,7 +241,7 @@ impl Tool for InputTextTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "input_text".to_string(),
-            description: "Type text into an input field identified by index. Clears existing content first.".to_string(),
+            description: "Type text into an input field identified by index. NOTE: This appends to existing text. Use clear_input first if the field has text you want to replace.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -270,10 +274,14 @@ impl Tool for InputTextTool {
         let selector_map = ctx.selector_map.read().await;
         let backend_id = match selector_map.get_backend_id(index) {
             Some(id) => id,
-            None => return Ok(ToolResult::error(format!(
-                "Element index {} not found. Valid indices: 1-{}",
-                index, selector_map.len()
-            ))),
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
         };
         drop(selector_map);
 
@@ -284,6 +292,61 @@ impl Tool for InputTextTool {
             ))),
             Err(e) => Ok(ToolResult::error(format!(
                 "Failed to type into element [{}]: {}",
+                index, e
+            )))
+        }
+    }
+}
+
+/// Clear an input field
+pub struct ClearInputTool;
+
+#[async_trait]
+impl Tool for ClearInputTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "clear_input".to_string(),
+            description: "Clear an input field by selecting all text and deleting it. Use this before input_text if the field already has text you want to replace.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "The 1-based index of the input element (e.g., [1], [2], [3])"
+                    }
+                },
+                "required": ["index"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the element number from the list, e.g. index: 3"
+            )),
+        };
+
+        // Look up backend_node_id from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let backend_id = match selector_map.get_backend_id(index) {
+            Some(id) => id,
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
+        };
+        drop(selector_map);
+
+        match ctx.browser.clear_input_by_backend_id(backend_id).await {
+            Ok(()) => Ok(ToolResult::success(format!("Cleared input field [{}]", index))),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to clear input field [{}]: {}",
                 index, e
             )))
         }
@@ -323,10 +386,14 @@ impl Tool for ScrollTool {
             let selector_map = ctx.selector_map.read().await;
             let element = match selector_map.get_element_by_index(index) {
                 Some(el) => el.clone(),
-                None => return Ok(ToolResult::error(format!(
-                    "Element index {} not found. Valid indices: 1-{}",
-                    index, selector_map.len()
-                ))),
+                None => {
+                    let msg = if selector_map.is_empty() {
+                        format!("Element index {} not found. No interactive elements on page.", index)
+                    } else {
+                        format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                    };
+                    return Ok(ToolResult::error(msg));
+                }
             };
             drop(selector_map);
 
@@ -597,10 +664,14 @@ impl Tool for SelectDropdownTool {
         let selector_map = ctx.selector_map.read().await;
         let element = match selector_map.get_element_by_index(index) {
             Some(el) => el.clone(),
-            None => return Ok(ToolResult::error(format!(
-                "Element index {} not found. Valid indices: 1-{}",
-                index, selector_map.len()
-            ))),
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
         };
         let backend_id = element.backend_node_id;
         drop(selector_map);
@@ -661,10 +732,14 @@ impl Tool for GetDropdownOptionsTool {
         let selector_map = ctx.selector_map.read().await;
         let element = match selector_map.get_element_by_index(index) {
             Some(el) => el.clone(),
-            None => return Ok(ToolResult::error(format!(
-                "Element index {} not found. Valid indices: 1-{}",
-                index, selector_map.len()
-            ))),
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
         };
         drop(selector_map);
 
@@ -752,6 +827,43 @@ impl Tool for UploadFileTool {
 // Tab Management Tools
 // ============================================================================
 
+/// Open a new tab and navigate to URL
+pub struct NewTabTool;
+
+#[async_trait]
+impl Tool for NewTabTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "new_tab".to_string(),
+            description: "Open a new browser tab and navigate to a URL. The new tab becomes the active tab.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to open in the new tab"
+                    }
+                },
+                "required": ["url"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let url = params["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+
+        match ctx.browser.new_tab(url).await {
+            Ok(tab_index) => Ok(ToolResult::success(format!(
+                "Opened new tab {} at: {}",
+                tab_index, url
+            ))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to open new tab: {}", e)))
+        }
+    }
+}
+
 /// Switch to a different tab
 pub struct SwitchTabTool;
 
@@ -760,37 +872,42 @@ impl Tool for SwitchTabTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "switch_tab".to_string(),
-            description: "Switch to a different browser tab by index".to_string(),
+            description: "Switch to a different browser tab by index (0-based). Use list_tabs to see available tabs.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "tab_index": {
+                    "index": {
                         "type": "integer",
                         "description": "The index of the tab to switch to (0-based)"
                     }
                 },
-                "required": ["tab_index"]
+                "required": ["index"]
             }),
         }
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let tab_index = match parse_int_param(&params, "tab_index") {
-            Some(i) => i,
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i as usize,
             None => return Ok(ToolResult::error(
-                "Missing 'tab_index' parameter. Use the tab index (0-based)."
+                "Missing 'index' parameter. Use the tab index (0-based)."
             )),
         };
 
-        // Tab switching requires access to browser's page list - placeholder
-        Ok(ToolResult::error(format!(
-            "Tab switching to index {} - feature requires multi-tab browser manager",
-            tab_index
-        )))
+        match ctx.browser.switch_tab(index).await {
+            Ok(()) => {
+                let url = ctx.browser.current_url().await.unwrap_or_default();
+                Ok(ToolResult::success(format!(
+                    "Switched to tab {}. URL: {}",
+                    index, url
+                )))
+            }
+            Err(e) => Ok(ToolResult::error(format!("Failed to switch tab: {}", e)))
+        }
     }
 }
 
-/// Close current or specified tab
+/// Close a tab by index
 pub struct CloseTabTool;
 
 #[async_trait]
@@ -798,27 +915,77 @@ impl Tool for CloseTabTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "close_tab".to_string(),
-            description: "Close the current tab or a specific tab by index".to_string(),
+            description: "Close a browser tab by index (0-based). Cannot close the last remaining tab.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "tab_index": {
+                    "index": {
                         "type": "integer",
-                        "description": "The index of the tab to close. If not specified, closes current tab."
+                        "description": "The index of the tab to close (0-based)"
                     }
                 },
+                "required": ["index"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i as usize,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the tab index (0-based)."
+            )),
+        };
+
+        match ctx.browser.close_tab(index).await {
+            Ok(()) => {
+                let active = ctx.browser.active_tab_index().await;
+                Ok(ToolResult::success(format!(
+                    "Closed tab {}. Active tab is now {}",
+                    index, active
+                )))
+            }
+            Err(e) => Ok(ToolResult::error(format!("Failed to close tab: {}", e)))
+        }
+    }
+}
+
+/// List all open tabs
+pub struct ListTabsTool;
+
+#[async_trait]
+impl Tool for ListTabsTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "list_tabs".to_string(),
+            description: "List all open browser tabs with their indices and URLs".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
                 "required": []
             }),
         }
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let tab_index = params["tab_index"].as_i64();
+    async fn execute(&self, _params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        match ctx.browser.list_tabs().await {
+            Ok(tabs) => {
+                let active = ctx.browser.active_tab_index().await;
+                let tab_list: Vec<Value> = tabs.iter().map(|(i, url)| {
+                    json!({
+                        "index": i,
+                        "url": url,
+                        "active": *i == active
+                    })
+                }).collect();
 
-        Ok(ToolResult::error(format!(
-            "Tab closing {:?} - feature requires multi-tab browser manager",
-            tab_index
-        )))
+                Ok(ToolResult::success_with_data(
+                    format!("{} tabs open (active: {})", tabs.len(), active),
+                    json!({ "tabs": tab_list })
+                ))
+            }
+            Err(e) => Ok(ToolResult::error(format!("Failed to list tabs: {}", e)))
+        }
     }
 }
 
@@ -1202,6 +1369,7 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     // Interaction
     registry.register(Arc::new(ClickTool));
     registry.register(Arc::new(InputTextTool));
+    registry.register(Arc::new(ClearInputTool));
     registry.register(Arc::new(ScrollTool));
     registry.register(Arc::new(ScrollUpTool));
     registry.register(Arc::new(SendKeysTool));
@@ -1217,8 +1385,10 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(UploadFileTool));
 
     // Tabs
+    registry.register(Arc::new(NewTabTool));
     registry.register(Arc::new(SwitchTabTool));
     registry.register(Arc::new(CloseTabTool));
+    registry.register(Arc::new(ListTabsTool));
 
     // JavaScript
     registry.register(Arc::new(EvaluateJsTool));

@@ -4,7 +4,9 @@ use genai::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio::time::Duration;
 
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
@@ -110,7 +112,12 @@ pub struct ExecutorConfig {
     pub provider: Option<String>,
     /// Auth token for Tasker Fast (passed from frontend)
     pub auth_token: Option<String>,
+    /// Minimum delay between LLM calls in milliseconds (rate limiting)
+    pub min_llm_delay_ms: u64,
 }
+
+/// Default minimum delay between LLM calls (2 seconds for rate limit safety)
+const DEFAULT_MIN_LLM_DELAY_MS: u64 = 2000;
 
 impl Default for ExecutorConfig {
     fn default() -> Self {
@@ -121,6 +128,7 @@ impl Default for ExecutorConfig {
             headless: false,
             provider: None,
             auth_token: None,
+            min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
         }
     }
 }
@@ -269,6 +277,7 @@ Keep taking actions until the condition above is clearly met.
 
         let mut step_number = 0;
         let mut first_iteration = true;
+        let mut last_llm_call: Option<Instant> = None;
 
         // Get max_steps from run metadata (workflow override) or use config default
         let max_steps = run
@@ -294,39 +303,83 @@ Keep taking actions until the condition above is clearly met.
             // This way only the LATEST screenshot is sent, not all historical ones
             let (page_state_text, chat_req) = if first_iteration {
                 // First iteration: use initial prompt + screenshot
+                // But ALSO populate selector_map for tools to use
+                let dom_result = self.browser.get_indexed_elements().await.unwrap_or_default();
+                *selector_map.write().await = dom_result.selector_map.clone();
+
                 let screenshot = self.browser.screenshot().await.ok();
                 let req = self.build_request_with_screenshot(&history, &user_prompt, screenshot, &tools);
                 (user_prompt.clone(), req)
             } else {
                 // Subsequent iterations: get current page state + screenshot + memories
-                let (text, req) = self.build_current_state_request(&history, &selector_map, &memories, &tools).await;
+                let (text, req) = self.build_current_state_request(&history, &selector_map, &memories, &tools, step_number, max_steps).await;
                 (text, req)
             };
             first_iteration = false;
 
             self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
 
-            // Call the model (using Railway for Tasker Fast, genai for others)
-            let llm_response: LLMResponse = if let Some(ref railway) = railway_client {
-                // Convert chat request to Railway format and call
-                match self.call_railway(railway, &chat_req, &tools).await {
-                    Ok(res) => LLMResponse::Railway(res),
-                    Err(e) => {
-                        let error = format!("LLM request failed: {}", e);
-                        self.logger.error(run_id, &error);
-                        self.logger.status(run_id, RunStatus::Failed, Some(error));
-                        return Err(e);
-                    }
+            // Rate limiting: ensure minimum delay between LLM calls
+            if let Some(last_call) = last_llm_call {
+                let elapsed = last_call.elapsed();
+                let min_delay = Duration::from_millis(self.config.min_llm_delay_ms);
+                if elapsed < min_delay {
+                    let sleep_time = min_delay - elapsed;
+                    self.logger.debug(run_id, format!("Rate limiting: sleeping {}ms", sleep_time.as_millis()));
+                    tokio::time::sleep(sleep_time).await;
                 }
-            } else {
-                // Use genai client
-                match client.exec_chat(&self.config.model, chat_req.clone(), None).await {
-                    Ok(res) => LLMResponse::Genai(res),
-                    Err(e) => {
-                        let error = format!("LLM request failed: {}", e);
-                        self.logger.error(run_id, &error);
-                        self.logger.status(run_id, RunStatus::Failed, Some(error));
-                        return Err(anyhow!("LLM request failed: {}", e));
+            }
+            last_llm_call = Some(Instant::now());
+
+            // Call the model with exponential backoff retry for rate limits
+            const MAX_RETRIES: u32 = 5;
+            const INITIAL_BACKOFF_MS: u64 = 2000; // Start with 2 seconds
+
+            let llm_response: LLMResponse = 'retry: {
+                let mut retry_count = 0u32;
+                let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+                loop {
+                    let result = if let Some(ref railway) = railway_client {
+                        self.call_railway(railway, &chat_req, &tools).await
+                            .map(LLMResponse::Railway)
+                    } else {
+                        client.exec_chat(&self.config.model, chat_req.clone(), None).await
+                            .map(LLMResponse::Genai)
+                            .map_err(|e| anyhow!("{}", e))
+                    };
+
+                    match result {
+                        Ok(res) => break 'retry res,
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            let is_rate_limit = error_str.contains("429")
+                                || error_str.contains("RESOURCE_EXHAUSTED")
+                                || error_str.contains("Too Many Requests")
+                                || error_str.contains("rate limit");
+
+                            if is_rate_limit && retry_count < MAX_RETRIES {
+                                retry_count += 1;
+                                self.logger.info(run_id, format!(
+                                    "⚠️ Rate limited (429). Retry {}/{} after {}ms backoff...",
+                                    retry_count, MAX_RETRIES, backoff_ms
+                                ));
+                                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                                backoff_ms *= 2; // Exponential backoff
+                                last_llm_call = Some(Instant::now()); // Reset rate limit timer
+                                continue;
+                            }
+
+                            // Non-retryable error or max retries exceeded
+                            let error = if is_rate_limit {
+                                format!("LLM request failed after {} retries (rate limited): {}", retry_count, e)
+                            } else {
+                                format!("LLM request failed: {}", e)
+                            };
+                            self.logger.error(run_id, &error);
+                            self.logger.status(run_id, RunStatus::Failed, Some(error.clone()));
+                            return Err(anyhow!(error));
+                        }
                     }
                 }
             };
@@ -456,6 +509,28 @@ Keep taking actions until the condition above is clearly met.
             for response in tool_responses {
                 history.push(ChatMessage::from(response));
             }
+
+            // TRUNCATE: Keep system + initial user + last 10 complete steps
+            // Step = User (page state) + Assistant (tool calls) + Tool response(s)
+            // CRITICAL: Tool calls and responses MUST stay paired
+            const MAX_STEPS: usize = 10;
+
+            if history.len() > 2 {
+                // Find step boundaries - each step starts with User message after index 1
+                let mut step_starts: Vec<usize> = Vec::new();
+                for i in 2..history.len() {
+                    if matches!(history[i].role, genai::chat::ChatRole::User) {
+                        step_starts.push(i);
+                    }
+                }
+
+                // Keep only last MAX_STEPS
+                if step_starts.len() > MAX_STEPS {
+                    let keep_from = step_starts[step_starts.len() - MAX_STEPS];
+                    history.drain(2..keep_from);
+                    tracing::debug!("Truncated history, keeping last {} steps", MAX_STEPS);
+                }
+            }
         }
 
         Ok(())
@@ -504,6 +579,8 @@ Keep taking actions until the condition above is clearly met.
         selector_map: &Arc<RwLock<SelectorMap>>,
         memories: &Arc<RwLock<Vec<crate::tools::Memory>>>,
         tools: &[Tool],
+        step_number: usize,
+        max_steps: usize,
     ) -> (String, ChatRequest) {
         let url = self.browser.current_url().await.unwrap_or_default();
         let title = self.browser.get_title().await.unwrap_or_default();
@@ -517,10 +594,11 @@ Keep taking actions until the condition above is clearly met.
         // Get current memories snapshot
         let memories_snapshot = memories.read().await;
 
-        // Build text content with memories
+        // Build text content with memories and step info
         let text = UserMessageBuilder::new()
             .with_memories(&memories_snapshot)
             .with_browser_state(&url, &title, &dom_result)
+            .with_step_info(step_number, max_steps)
             .build();
 
         // Take screenshot

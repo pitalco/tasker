@@ -222,17 +222,7 @@ fn get_text_content(node: &EnhancedDOMNode) -> Option<String> {
     if text.is_empty() {
         None
     } else {
-        // Truncate to 100 chars
-        Some(truncate_str(&text, 100))
-    }
-}
-
-/// Safely truncate string at character boundary
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        s.chars().take(max_chars).collect::<String>() + "..."
+        Some(text)
     }
 }
 
@@ -253,7 +243,7 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
         // Name
         if let Some(n) = &elem.name {
             if !n.is_empty() {
-                attrs.push(format!("name={}", truncate_str(n, 30)));
+                attrs.push(format!("name={}", n));
             }
         }
 
@@ -267,7 +257,7 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
         // Value (for form elements)
         if let Some(v) = &elem.value {
             if !v.is_empty() && elem.tag != "button" {
-                attrs.push(format!("value={}", truncate_str(v, 30)));
+                attrs.push(format!("value={}", v));
             }
         }
 
@@ -299,7 +289,7 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
         // Placeholder
         if let Some(p) = &elem.placeholder {
             if !p.is_empty() {
-                attrs.push(format!("placeholder={}", truncate_str(p, 30)));
+                attrs.push(format!("placeholder={}", p));
             }
         }
 
@@ -312,7 +302,7 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
                     .map(|t| t.to_lowercase() == a.to_lowercase())
                     .unwrap_or(false);
                 if !skip {
-                    attrs.push(format!("aria-label={}", truncate_str(a, 40)));
+                    attrs.push(format!("aria-label={}", a));
                 }
             }
         }
@@ -327,15 +317,15 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
                     .map(|x| x.to_lowercase() == t.to_lowercase())
                     .unwrap_or(false);
                 if !skip_aria && !skip_text {
-                    attrs.push(format!("title={}", truncate_str(t, 40)));
+                    attrs.push(format!("title={}", t));
                 }
             }
         }
 
-        // Href (truncated, skip javascript:)
+        // Href (skip javascript:)
         if let Some(h) = &elem.href {
             if !h.is_empty() && !h.starts_with("javascript:") {
-                attrs.push(format!("href={}", truncate_str(h, 50)));
+                attrs.push(format!("href={}", h));
             }
         }
 
@@ -352,7 +342,7 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
         let text = elem
             .text
             .as_ref()
-            .map(|t| truncate_str(t.trim(), 50))
+            .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty());
 
         let line = match text {
