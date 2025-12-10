@@ -435,7 +435,7 @@
 						id="task-description-textarea"
 						bind:value={taskDescription}
 						placeholder="Add any specific instructions for the AI..."
-						class="input-brutal h-24 resize-none"
+						class="input-brutal h-60 resize-none"
 					></textarea>
 				</div>
 

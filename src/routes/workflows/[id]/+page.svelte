@@ -220,7 +220,7 @@
 					<textarea
 						bind:value={editTaskDescription}
 						oninput={markChanged}
-						class="input-brutal h-20 resize-none"
+						class="input-brutal h-60 resize-none"
 						placeholder="What does this workflow automate?"
 					></textarea>
 				</div>

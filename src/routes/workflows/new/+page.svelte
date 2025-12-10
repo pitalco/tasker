@@ -114,7 +114,7 @@
 				<textarea
 					id="description"
 					bind:value={taskDescription}
-					rows="6"
+					rows="10"
 					placeholder="Describe what you want to automate in plain English...
 
 Example: Go to amazon.com, search for 'mechanical keyboard', filter by 4+ stars, sort by price low to high, and screenshot the first 5 results."
