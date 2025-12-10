@@ -161,8 +161,7 @@ impl Tool for WaitTool {
                         "type": "integer",
                         "description": "Number of seconds to wait (default: 3)",
                         "default": 3,
-                        "minimum": 1,
-                        "maximum": 30
+                        "minimum": 1
                     }
                 },
                 "required": []
@@ -171,7 +170,7 @@ impl Tool for WaitTool {
     }
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolResult> {
-        let seconds = params["seconds"].as_i64().unwrap_or(3).clamp(1, 30);
+        let seconds = params["seconds"].as_i64().unwrap_or(3).max(1);
         tokio::time::sleep(tokio::time::Duration::from_secs(seconds as u64)).await;
         Ok(ToolResult::success(format!("Waited for {} seconds", seconds)))
     }
