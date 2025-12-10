@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::dom::{
@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use tracing::instrument;
 
 use crate::browser::cdp_dom::{self, BackendNodeId, DOMExtractionResult};
 use crate::models::Viewport;
@@ -56,6 +57,7 @@ impl BrowserManager {
 
     /// Launch browser with full options
     /// Uses the SINGLE default page that Chrome creates - no extra windows
+    #[instrument(skip(self), fields(headless = headless))]
     pub async fn launch_with_options(
         &self,
         _url: &str,  // URL not used here - caller should call navigate() after setup
@@ -294,11 +296,13 @@ impl BrowserManager {
     }
 
     /// Navigate to a URL
+    #[instrument(skip(self), fields(url = %url))]
     pub async fn navigate(&self, url: &str) -> Result<()> {
-        let page = self.get_active_page().await?;
+        let page = self.get_active_page().await
+            .context("Failed to get active page for navigation")?;
         page.goto(url)
             .await
-            .map_err(|e| anyhow!("Failed to navigate to {}: {}", url, e))?;
+            .with_context(|| format!("Failed to navigate to {}", url))?;
 
         Ok(())
     }
@@ -349,11 +353,14 @@ impl BrowserManager {
     /// Get indexed interactive elements using CDP-based extraction
     /// Returns elements with backend_node_id for stable interaction
     /// Waits for page to be ready and retries if no elements found
+    #[instrument(skip(self))]
     pub async fn get_indexed_elements(&self) -> Result<DOMExtractionResult> {
-        let page = self.get_active_page().await?;
+        let page = self.get_active_page().await
+            .context("Failed to get active page for DOM extraction")?;
 
-        // Wait for document.readyState to be "complete" (max 5 seconds)
-        for _ in 0..50 {
+        // Wait for document.readyState to be "complete" (max 3 seconds)
+        // Most pages load faster, so we don't need to wait too long
+        for _ in 0..30 {
             let ready_state: String = page
                 .evaluate("document.readyState")
                 .await
@@ -366,27 +373,42 @@ impl BrowserManager {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Extract elements, retry if empty (handles dynamic content)
-        for attempt in 0..5 {
+        // Extract elements with retry for dynamic content
+        // Use exponential backoff: 50ms, 100ms, 200ms (max ~350ms total wait)
+        const MAX_RETRIES: u32 = 3;
+        let mut backoff_ms = 50u64;
+
+        for attempt in 0..MAX_RETRIES {
             let result = cdp_dom::extract_dom(&page).await?;
 
+            // Success if we have any interactive elements
             if !result.selector_map.ordered_elements.is_empty() {
+                tracing::debug!(
+                    "DOM extraction succeeded on attempt {} with {} elements",
+                    attempt + 1,
+                    result.selector_map.ordered_elements.len()
+                );
                 return Ok(result);
             }
 
-            // Wait longer on each retry (100ms, 200ms, 300ms, 400ms)
-            if attempt < 4 {
-                tokio::time::sleep(Duration::from_millis((attempt as u64 + 1) * 100)).await;
+            // Don't sleep on last attempt
+            if attempt < MAX_RETRIES - 1 {
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms *= 2; // Exponential backoff
             }
         }
 
         // Return last result even if empty (let caller handle it)
+        // This allows the agent to see the page state even without interactive elements
+        tracing::warn!("DOM extraction found no interactive elements after {} retries", MAX_RETRIES);
         cdp_dom::extract_dom(&page).await
     }
 
     /// Click element by backend_node_id with fallback strategies
+    #[instrument(skip(self), fields(backend_id = backend_id))]
     pub async fn click_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
-        let page = self.get_active_page().await?;
+        let page = self.get_active_page().await
+            .context("Failed to get active page for click")?;
 
         // First, try to scroll element into view
         let scroll_params = ScrollIntoViewIfNeededParams {
@@ -497,6 +519,7 @@ impl BrowserManager {
     }
 
     /// Highlight element with yellow flickering border (visual feedback before click)
+    /// This is non-blocking - the highlight animation runs in the browser while we continue
     async fn highlight_element(&self, page: &Page, backend_id: BackendNodeId) {
         // Resolve backend_node_id to JavaScript object
         let resolve_params = ResolveNodeParams {
@@ -508,26 +531,26 @@ impl BrowserManager {
 
         if let Ok(result) = page.execute(resolve_params).await {
             if let Some(object_id) = result.result.object.object_id {
+                // Reduced highlight: single brief flash instead of 6 flickers
+                // This provides visual feedback without blocking for 650ms
                 let highlight_js = r#"
                 function() {
                     const orig = {
                         outline: this.style.outline,
-                        outlineOffset: this.style.outlineOffset
+                        outlineOffset: this.style.outlineOffset,
+                        transition: this.style.transition
                     };
 
+                    this.style.transition = 'outline-color 0.15s ease-out';
                     this.style.outline = '3px solid yellow';
                     this.style.outlineOffset = '2px';
 
-                    let count = 0;
-                    const flicker = setInterval(() => {
-                        this.style.outlineColor = count % 2 === 0 ? 'yellow' : 'transparent';
-                        count++;
-                        if (count >= 6) {
-                            clearInterval(flicker);
-                            this.style.outline = orig.outline;
-                            this.style.outlineOffset = orig.outlineOffset;
-                        }
-                    }, 100);
+                    // Single flash - restore after 200ms
+                    setTimeout(() => {
+                        this.style.outline = orig.outline;
+                        this.style.outlineOffset = orig.outlineOffset;
+                        this.style.transition = orig.transition;
+                    }, 200);
                 }
                 "#;
 
@@ -538,8 +561,9 @@ impl BrowserManager {
 
                 if let Ok(params) = call_params {
                     let _ = page.execute(params).await;
-                    // Wait for highlight to be visible (600ms for 6 flickers @ 100ms each)
-                    tokio::time::sleep(Duration::from_millis(650)).await;
+                    // Only wait 50ms for the highlight to start - don't wait for it to complete
+                    // The animation runs asynchronously in the browser
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
         }

@@ -54,6 +54,12 @@
 				return `Got Dropdown Options(index: ${params.index ?? ''})`;
 			case 'done':
 				return 'Completed Task';
+			case 'save_memory': {
+				const content = String(params.content || '');
+				const displayContent = content.length > 50 ? content.slice(0, 47) + '...' : content;
+				const keyPart = params.key ? `key: "${params.key}", ` : '';
+				return `Save Memory(${keyPart}"${displayContent}")`;
+			}
 			default:
 				// Fallback: convert snake_case to Title Case
 				const readable = step.tool_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());

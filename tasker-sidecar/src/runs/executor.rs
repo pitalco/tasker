@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
-use genai::Client;
+use genai::resolver::{AuthData, AuthResolver};
+use genai::{Client, ModelIden};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::instrument;
 
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
@@ -28,6 +31,21 @@ enum LLMResponse {
 }
 
 impl LLMResponse {
+    /// Extract text content from the response (if any)
+    fn text_content(&self) -> Option<String> {
+        match self {
+            LLMResponse::Genai(res) => {
+                res.first_text().map(|s| s.to_string())
+            }
+            LLMResponse::Railway(res) => {
+                res.choices.first()
+                    .and_then(|c| c.message.content.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            }
+        }
+    }
+
     /// Extract tool calls from either response type
     fn into_tool_calls(self) -> Vec<UnifiedToolCall> {
         match self {
@@ -63,11 +81,29 @@ fn extract_railway_tool_calls(response: &RailwayChatResponse) -> Vec<UnifiedTool
                             .unwrap_or("")
                             .to_string();
 
-                        // Arguments come as a JSON string that needs parsing
-                        let arguments = func.get("arguments")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| serde_json::from_str(s).ok())
-                            .unwrap_or(Value::Object(serde_json::Map::new()));
+                        // Arguments can come as either:
+                        // 1. A JSON string that needs parsing (OpenAI format): "{ \"index\": 5 }"
+                        // 2. An already-parsed JSON object (some APIs): { "index": 5 }
+                        let arguments = match func.get("arguments") {
+                            Some(Value::String(s)) => {
+                                // Case 1: Arguments as JSON string - parse it
+                                serde_json::from_str(s).unwrap_or_else(|e| {
+                                    tracing::warn!("Failed to parse tool arguments JSON string: {} - input: {}", e, s);
+                                    Value::Object(serde_json::Map::new())
+                                })
+                            }
+                            Some(Value::Object(obj)) => {
+                                // Case 2: Arguments already as JSON object
+                                Value::Object(obj.clone())
+                            }
+                            Some(other) => {
+                                tracing::warn!("Unexpected tool arguments type: {:?}", other);
+                                Value::Object(serde_json::Map::new())
+                            }
+                            None => {
+                                Value::Object(serde_json::Map::new())
+                            }
+                        };
 
                         tool_calls.push(UnifiedToolCall {
                             call_id: id.to_string(),
@@ -114,6 +150,8 @@ pub struct ExecutorConfig {
     pub auth_token: Option<String>,
     /// Minimum delay between LLM calls in milliseconds (rate limiting)
     pub min_llm_delay_ms: u64,
+    /// Whether to capture screenshots after each step (disable for faster execution)
+    pub capture_screenshots: bool,
 }
 
 /// Default minimum delay between LLM calls (2 seconds for rate limit safety)
@@ -129,6 +167,7 @@ impl Default for ExecutorConfig {
             provider: None,
             auth_token: None,
             min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
+            capture_screenshots: true,
         }
     }
 }
@@ -151,6 +190,8 @@ pub struct RunExecutor {
     registry: ToolRegistry,
     logger: RunLogger,
     browser: Arc<BrowserManager>,
+    /// Cancellation token for graceful shutdown
+    cancel_token: CancellationToken,
 }
 
 impl RunExecutor {
@@ -163,10 +204,22 @@ impl RunExecutor {
             registry,
             logger,
             browser,
+            cancel_token: CancellationToken::new(),
         }
     }
 
+    /// Get the cancellation token for external cancellation
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    /// Cancel the running execution
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+
     /// Execute a run
+    #[instrument(skip(self, run), fields(run_id = %run.id, model = %self.config.model))]
     pub async fn execute(&self, run: &Run) -> Result<()> {
         let run_id = &run.id;
 
@@ -255,15 +308,22 @@ Keep taking actions until the condition above is clearly met.
             self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
             Some(RailwayClient::with_token(auth_token))
         } else {
-            // Set up API key for genai providers
-            if let Some(ref api_key) = self.config.api_key {
-                unsafe { std::env::set_var("ANTHROPIC_API_KEY", api_key) };
-            }
             None
         };
 
         // Create genai client (for non-Railway providers)
-        let client = Client::default();
+        // Pass API key directly through AuthResolver instead of using environment variables
+        let client = if let Some(api_key) = &self.config.api_key {
+            let api_key = api_key.clone();
+            let auth_resolver = AuthResolver::from_resolver_fn(
+                move |_model_iden: ModelIden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {
+                    Ok(Some(AuthData::from_single(api_key.clone())))
+                }
+            );
+            Client::builder().with_auth_resolver(auth_resolver).build()
+        } else {
+            Client::default()
+        };
 
         // Convert our tools to genai tools
         let tools = self.build_genai_tools();
@@ -289,6 +349,13 @@ Keep taking actions until the condition above is clearly met.
 
         // Agent loop
         loop {
+            // Check for cancellation at the start of each iteration
+            if self.cancel_token.is_cancelled() {
+                self.logger.info(run_id, "Run cancelled by user");
+                self.logger.status(run_id, RunStatus::Cancelled, Some("Cancelled by user".to_string()));
+                return Ok(());
+            }
+
             if step_number >= max_steps {
                 self.logger.warn(run_id, format!("Reached maximum steps limit ({})", max_steps));
                 self.logger.status(
@@ -317,7 +384,13 @@ Keep taking actions until the condition above is clearly met.
             };
             first_iteration = false;
 
-            self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
+            // Log what we're sending to LLM
+            let step_log = format!(
+                "Step {}/{} | Sending {} messages to LLM",
+                step_number + 1, max_steps, history.len() + 1 // +1 for current page state
+            );
+            tracing::info!("{}", step_log);
+            self.logger.info(run_id, step_log);
 
             // Rate limiting: ensure minimum delay between LLM calls
             if let Some(last_call) = last_llm_call {
@@ -395,12 +468,20 @@ Keep taking actions until the condition above is clearly met.
                 }
             };
 
+            // Extract text content before consuming the response
+            let text_content = llm_response.text_content();
+
             // Check for tool calls
             let tool_calls = llm_response.into_tool_calls();
 
             if tool_calls.is_empty() {
-                // No tool calls - model might have responded with text
-                self.logger.info(run_id, "No tool calls in response, task may be complete");
+                // No tool calls - use text content as the result if present
+                if let Some(content) = text_content {
+                    self.logger.info(run_id, "LLM returned text response, completing task");
+                    self.logger.result(run_id, &content);
+                } else {
+                    self.logger.info(run_id, "No tool calls in response, task may be complete");
+                }
                 self.logger.status(run_id, RunStatus::Completed, None);
                 break;
             }
@@ -418,7 +499,12 @@ Keep taking actions until the condition above is clearly met.
                 // Resolve variables in parameters before execution
                 let resolved_params = resolve_variables(&params, &variables);
 
-                self.logger.info(run_id, format!("Executing tool: {} with params: {}", tool_name, resolved_params));
+                // Log tool call in function(args) format
+                let params_str = serde_json::to_string(&resolved_params).unwrap_or_default();
+                let params_short: String = params_str.chars().take(80).collect();
+                let tool_log = format!("{}({})", tool_name, params_short);
+                tracing::info!("{}", tool_log);
+                self.logger.info(run_id, tool_log);
 
                 // Create step record (store original params for logging, use resolved for execution)
                 let mut step = RunStep::new(
@@ -441,6 +527,16 @@ Keep taking actions until the condition above is clearly met.
 
                 let duration_ms = start.elapsed().as_millis() as i64;
 
+                // Log tool result
+                let result_log = format!(
+                    "{} -> {} ({}ms)",
+                    tool_name,
+                    if result.success { "success" } else { "failed" },
+                    duration_ms
+                );
+                tracing::info!("{}", result_log);
+                self.logger.info(run_id, result_log);
+
                 // Update step with result
                 step.complete(
                     result.success,
@@ -449,8 +545,8 @@ Keep taking actions until the condition above is clearly met.
                     duration_ms,
                 );
 
-                // Take screenshot after action (if browser tool)
-                if is_browser_tool(tool_name) {
+                // Take screenshot after action (if browser tool and screenshots enabled)
+                if self.config.capture_screenshots && is_browser_tool(tool_name) {
                     if let Ok(screenshot) = self.browser.screenshot().await {
                         step.screenshot = Some(screenshot);
                     }
@@ -519,28 +615,6 @@ Keep taking actions until the condition above is clearly met.
             // 3. The tool responses
             for response in tool_responses {
                 history.push(ChatMessage::from(response));
-            }
-
-            // TRUNCATE: Keep system + initial user + last 10 complete steps
-            // Step = User (page state) + Assistant (tool calls) + Tool response(s)
-            // CRITICAL: Tool calls and responses MUST stay paired
-            const MAX_STEPS: usize = 10;
-
-            if history.len() > 2 {
-                // Find step boundaries - each step starts with User message after index 1
-                let mut step_starts: Vec<usize> = Vec::new();
-                for i in 2..history.len() {
-                    if matches!(history[i].role, genai::chat::ChatRole::User) {
-                        step_starts.push(i);
-                    }
-                }
-
-                // Keep only last MAX_STEPS
-                if step_starts.len() > MAX_STEPS {
-                    let keep_from = step_starts[step_starts.len() - MAX_STEPS];
-                    history.drain(2..keep_from);
-                    tracing::debug!("Truncated history, keeping last {} steps", MAX_STEPS);
-                }
             }
         }
 
@@ -765,17 +839,46 @@ fn is_browser_tool(name: &str) -> bool {
     )
 }
 
-/// Replace {{variable_name}} placeholders in JSON params with actual values
+/// Replace {{variable_name}} placeholders in JSON params with actual values.
+/// This properly traverses the JSON structure instead of doing string replacement,
+/// which prevents issues with special characters in variable values.
 fn resolve_variables(params: &Value, variables: &HashMap<String, String>) -> Value {
     if variables.is_empty() {
         return params.clone();
     }
 
-    let mut json_str = params.to_string();
-    for (name, value) in variables {
-        let pattern = format!("{{{{{}}}}}", name); // {{name}}
-        json_str = json_str.replace(&pattern, value);
-    }
+    resolve_variables_recursive(params, variables)
+}
 
-    serde_json::from_str(&json_str).unwrap_or_else(|_| params.clone())
+/// Recursively resolve variables in a JSON value
+fn resolve_variables_recursive(value: &Value, variables: &HashMap<String, String>) -> Value {
+    match value {
+        Value::String(s) => {
+            // Replace {{variable}} patterns in strings
+            let mut result = s.clone();
+            for (name, var_value) in variables {
+                let pattern = format!("{{{{{}}}}}", name); // {{name}}
+                result = result.replace(&pattern, var_value);
+            }
+            Value::String(result)
+        }
+        Value::Object(map) => {
+            // Recursively process object values
+            Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), resolve_variables_recursive(v, variables)))
+                    .collect()
+            )
+        }
+        Value::Array(arr) => {
+            // Recursively process array elements
+            Value::Array(
+                arr.iter()
+                    .map(|v| resolve_variables_recursive(v, variables))
+                    .collect()
+            )
+        }
+        // Numbers, bools, and null pass through unchanged
+        _ => value.clone(),
+    }
 }

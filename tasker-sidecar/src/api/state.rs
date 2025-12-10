@@ -1,6 +1,9 @@
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
 use crate::recording::BrowserRecorder;
@@ -28,10 +31,18 @@ pub enum WsEvent {
     Pong,
 }
 
+/// Connected WebSocket client info
+#[derive(Debug)]
+pub struct ConnectedClient {
+    pub connected_at: Instant,
+}
+
 /// Active recorder with its session
 pub struct ActiveRecorder {
     pub recorder: Arc<BrowserRecorder>,
     pub session: RecordingSession,
+    /// Optional client ID that started this recording
+    pub client_id: Option<String>,
 }
 
 /// Shared application state
@@ -41,6 +52,18 @@ pub struct AppState {
 
     /// Active runs: run_id -> run (for tracking running executions)
     pub active_runs: DashMap<String, Run>,
+
+    /// Cancel tokens for active executors: run_id -> token
+    pub active_executors: DashMap<String, CancellationToken>,
+
+    /// Global shutdown token for graceful shutdown
+    pub shutdown_token: CancellationToken,
+
+    /// Connected WebSocket clients: client_id -> client info
+    pub connected_clients: DashMap<String, ConnectedClient>,
+
+    /// Total connection count (for metrics)
+    connection_count: AtomicUsize,
 
     /// Runs repository for persistence
     pub runs_repository: Option<RunRepository>,
@@ -72,6 +95,10 @@ impl AppState {
         Self {
             recordings: DashMap::new(),
             active_runs: DashMap::new(),
+            active_executors: DashMap::new(),
+            shutdown_token: CancellationToken::new(),
+            connected_clients: DashMap::new(),
+            connection_count: AtomicUsize::new(0),
             runs_repository,
             ws_broadcast: tx,
             recording_lock: Mutex::new(()),
@@ -85,6 +112,72 @@ impl AppState {
 
     pub fn subscribe(&self) -> broadcast::Receiver<WsEvent> {
         self.ws_broadcast.subscribe()
+    }
+
+    /// Register a WebSocket client connection
+    pub fn client_connected(&self, client_id: &str) {
+        self.connected_clients.insert(
+            client_id.to_string(),
+            ConnectedClient {
+                connected_at: Instant::now(),
+            },
+        );
+        let count = self.connection_count.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::debug!(
+            "Client {} connected (total: {}, active: {})",
+            client_id,
+            count,
+            self.connected_clients.len()
+        );
+    }
+
+    /// Unregister a WebSocket client connection and clean up any associated resources
+    pub fn client_disconnected(&self, client_id: &str) {
+        if let Some((_, client)) = self.connected_clients.remove(client_id) {
+            let duration = client.connected_at.elapsed();
+            tracing::debug!(
+                "Client {} disconnected after {:?} (active: {})",
+                client_id,
+                duration,
+                self.connected_clients.len()
+            );
+        }
+
+        // Clean up any recordings associated with this client
+        // (In case the client disconnected while recording)
+        self.recordings.retain(|session_id, active_recorder| {
+            let keep = active_recorder.client_id.as_deref() != Some(client_id);
+            if !keep {
+                tracing::info!("Cleaning up orphaned recording session: {}", session_id);
+            }
+            keep
+        });
+    }
+
+    /// Get the number of active WebSocket connections
+    pub fn active_connection_count(&self) -> usize {
+        self.connected_clients.len()
+    }
+
+    /// Graceful shutdown - cancel all active runs
+    pub async fn shutdown(&self) {
+        let active_count = self.active_executors.len();
+        if active_count > 0 {
+            tracing::info!("Cancelling {} active run(s)...", active_count);
+        }
+
+        // Cancel global shutdown token
+        self.shutdown_token.cancel();
+
+        // Cancel all active executors
+        for entry in self.active_executors.iter() {
+            entry.value().cancel();
+        }
+
+        // Wait briefly for cleanup
+        if active_count > 0 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 }
 

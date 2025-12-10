@@ -39,11 +39,16 @@ impl AIEnhancer {
         let default_provider = config::get_default_provider()
             .unwrap_or_else(|| "gemini".to_string());
 
-        tracing::info!("AI enhancer using provider: {}", default_provider);
+        tracing::info!("AI enhancer: provider='{}', has_auth_token={}",
+            default_provider, auth_token.is_some());
 
         if default_provider == "tasker-fast" {
             // Use Tasker Fast - requires auth token
-            let auth_token = auth_token?;
+            if auth_token.is_none() {
+                tracing::error!("Tasker Fast selected but no auth token provided!");
+                return None;
+            }
+            let auth_token = auth_token.unwrap();
             tracing::info!("Using Tasker Fast for AI enhancement");
             Some(Self {
                 provider: EnhancerProvider::TaskerFast {
@@ -141,44 +146,50 @@ impl AIEnhancer {
         )));
 
         // Build context for each step with screenshots
+        // Only include screenshots for first 3 and last 3 steps to avoid request size limits
+        let total_steps = steps.len();
         for (i, step) in steps.iter().enumerate() {
             let step_num = i + 1;
+            let include_screenshot = i < 3 || i >= total_steps.saturating_sub(3);
 
             // Add step context as text
             let step_context = format!(
                 "\n\n--- Step {} of {} ---\nAction: {:?}\nSelector: {:?}\nValue: {:?}",
                 step_num,
-                steps.len(),
+                total_steps,
                 step.action.action_type,
                 step.action.selector.as_ref().map(|s| format!("{:?}: {}", s.strategy, s.value)),
                 step.action.value
             );
             parts.push(ContentPart::from_text(step_context));
 
-            // Add before screenshot if available
-            if let Some(ref before) = step.screenshot_before {
-                parts.push(ContentPart::from_text(format!(
-                    "\nStep {} BEFORE screenshot:",
-                    step_num
-                )));
-                parts.push(ContentPart::from_binary_base64(
-                    "image/png",
-                    before.clone(),
-                    Some(format!("step_{}_before.png", step_num)),
-                ));
-            }
+            // Add screenshots only for first/last steps to keep request size manageable
+            if include_screenshot {
+                // Add before screenshot if available
+                if let Some(ref before) = step.screenshot_before {
+                    parts.push(ContentPart::from_text(format!(
+                        "\nStep {} BEFORE screenshot:",
+                        step_num
+                    )));
+                    parts.push(ContentPart::from_binary_base64(
+                        "image/png",
+                        before.clone(),
+                        Some(format!("step_{}_before.png", step_num)),
+                    ));
+                }
 
-            // Add after screenshot if available
-            if let Some(ref after) = step.screenshot_after {
-                parts.push(ContentPart::from_text(format!(
-                    "\nStep {} AFTER screenshot:",
-                    step_num
-                )));
-                parts.push(ContentPart::from_binary_base64(
-                    "image/png",
-                    after.clone(),
-                    Some(format!("step_{}_after.png", step_num)),
-                ));
+                // Add after screenshot if available
+                if let Some(ref after) = step.screenshot_after {
+                    parts.push(ContentPart::from_text(format!(
+                        "\nStep {} AFTER screenshot:",
+                        step_num
+                    )));
+                    parts.push(ContentPart::from_binary_base64(
+                        "image/png",
+                        after.clone(),
+                        Some(format!("step_{}_after.png", step_num)),
+                    ));
+                }
             }
         }
 
@@ -222,14 +233,17 @@ impl AIEnhancer {
         }));
 
         // Build context for each step with screenshots
+        // Only include screenshots for first 3 and last 3 steps to avoid request size limits
+        let total_steps = steps.len();
         for (i, step) in steps.iter().enumerate() {
             let step_num = i + 1;
+            let include_screenshot = i < 3 || i >= total_steps.saturating_sub(3);
 
             // Add step context as text
             let step_context = format!(
                 "\n\n--- Step {} of {} ---\nAction: {:?}\nSelector: {:?}\nValue: {:?}",
                 step_num,
-                steps.len(),
+                total_steps,
                 step.action.action_type,
                 step.action.selector.as_ref().map(|s| format!("{:?}: {}", s.strategy, s.value)),
                 step.action.value
@@ -239,32 +253,35 @@ impl AIEnhancer {
                 "text": step_context
             }));
 
-            // Add before screenshot if available
-            if let Some(ref before) = step.screenshot_before {
-                content_parts.push(json!({
-                    "type": "text",
-                    "text": format!("\nStep {} BEFORE screenshot:", step_num)
-                }));
-                content_parts.push(json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": format!("data:image/png;base64,{}", before)
-                    }
-                }));
-            }
+            // Add screenshots only for first/last steps to keep request size manageable
+            if include_screenshot {
+                // Add before screenshot if available
+                if let Some(ref before) = step.screenshot_before {
+                    content_parts.push(json!({
+                        "type": "text",
+                        "text": format!("\nStep {} BEFORE screenshot:", step_num)
+                    }));
+                    content_parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:image/png;base64,{}", before)
+                        }
+                    }));
+                }
 
-            // Add after screenshot if available
-            if let Some(ref after) = step.screenshot_after {
-                content_parts.push(json!({
-                    "type": "text",
-                    "text": format!("\nStep {} AFTER screenshot:", step_num)
-                }));
-                content_parts.push(json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": format!("data:image/png;base64,{}", after)
-                    }
-                }));
+                // Add after screenshot if available
+                if let Some(ref after) = step.screenshot_after {
+                    content_parts.push(json!({
+                        "type": "text",
+                        "text": format!("\nStep {} AFTER screenshot:", step_num)
+                    }));
+                    content_parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:image/png;base64,{}", after)
+                        }
+                    }));
+                }
             }
         }
 

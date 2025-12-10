@@ -226,9 +226,13 @@ fn get_text_content(node: &EnhancedDOMNode) -> Option<String> {
     }
 }
 
+/// Maximum characters for LLM DOM output (similar to browser-use's 40K limit)
+const MAX_LLM_OUTPUT_CHARS: usize = 40000;
+
 /// Format selector map for LLM context
 pub fn format_for_llm(selector_map: &SelectorMap) -> String {
     let mut output = String::new();
+    let mut elements_added = 0;
 
     for elem in &selector_map.ordered_elements {
         let mut attrs: Vec<String> = Vec::new();
@@ -346,12 +350,25 @@ pub fn format_for_llm(selector_map: &SelectorMap) -> String {
             .filter(|t| !t.is_empty());
 
         let line = match text {
-            Some(t) => format!("[{}]<{}{} {}>{}", elem.index, elem.tag, attr_str, pos, t),
-            None => format!("[{}]<{}{} {} />", elem.index, elem.tag, attr_str, pos),
+            Some(t) => format!("[{}]<{}{} {}>{}\n", elem.index, elem.tag, attr_str, pos, t),
+            None => format!("[{}]<{}{} {} />\n", elem.index, elem.tag, attr_str, pos),
         };
 
+        // Check character limit before adding
+        if output.len() + line.len() > MAX_LLM_OUTPUT_CHARS {
+            let remaining = selector_map.ordered_elements.len() - elements_added;
+            output.push_str(&format!("\n... truncated ({} more elements)\n", remaining));
+            tracing::warn!(
+                "DOM output truncated at {} chars ({} of {} elements shown)",
+                output.len(),
+                elements_added,
+                selector_map.ordered_elements.len()
+            );
+            break;
+        }
+
         output.push_str(&line);
-        output.push('\n');
+        elements_added += 1;
     }
 
     output

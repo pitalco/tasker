@@ -1,12 +1,17 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use keyring::Entry;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
+use tracing::instrument;
 
 const SERVICE_NAME: &str = "com.tasker.app";
 const AUTH_TOKEN_KEY: &str = "auth_token";
 const DEFAULT_BACKEND_URL: &str = "https://api.automatewithtasker.com";
+
+/// Default timeout for LLM requests (2 minutes for slow models)
+const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn get_backend_url() -> String {
     std::env::var("TASKER_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
@@ -83,6 +88,15 @@ pub struct RailwayClient {
 }
 
 impl RailwayClient {
+    /// Create HTTP client with appropriate timeouts
+    fn create_client() -> Client {
+        Client::builder()
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .connect_timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    }
+
     /// Create a new Railway client
     /// Requires authentication token from keyring
     pub fn new() -> Result<Self> {
@@ -90,7 +104,7 @@ impl RailwayClient {
             .ok_or_else(|| anyhow!("Not authenticated. Please sign in to use Tasker Fast."))?;
 
         Ok(Self {
-            client: Client::new(),
+            client: Self::create_client(),
             auth_token,
         })
     }
@@ -98,12 +112,13 @@ impl RailwayClient {
     /// Create a new Railway client with a provided token
     pub fn with_token(auth_token: String) -> Self {
         Self {
-            client: Client::new(),
+            client: Self::create_client(),
             auth_token,
         }
     }
 
     /// Send a chat completion request to the Railway proxy
+    #[instrument(skip(self, request), fields(message_count = request.messages.len()))]
     pub async fn chat(&self, request: RailwayChatRequest) -> Result<RailwayChatResponse> {
         let response = self
             .client
@@ -113,7 +128,7 @@ impl RailwayClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow!("Railway request failed: {}", e))?;
+            .context("Railway request failed - check network connection")?;
 
         let status = response.status();
 
