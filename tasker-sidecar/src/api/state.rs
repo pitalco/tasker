@@ -1,8 +1,9 @@
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
 use crate::recording::BrowserRecorder;
@@ -52,6 +53,12 @@ pub struct AppState {
     /// Active runs: run_id -> run (for tracking running executions)
     pub active_runs: DashMap<String, Run>,
 
+    /// Cancel tokens for active executors: run_id -> token
+    pub active_executors: DashMap<String, CancellationToken>,
+
+    /// Global shutdown token for graceful shutdown
+    pub shutdown_token: CancellationToken,
+
     /// Connected WebSocket clients: client_id -> client info
     pub connected_clients: DashMap<String, ConnectedClient>,
 
@@ -88,6 +95,8 @@ impl AppState {
         Self {
             recordings: DashMap::new(),
             active_runs: DashMap::new(),
+            active_executors: DashMap::new(),
+            shutdown_token: CancellationToken::new(),
             connected_clients: DashMap::new(),
             connection_count: AtomicUsize::new(0),
             runs_repository,
@@ -148,6 +157,27 @@ impl AppState {
     /// Get the number of active WebSocket connections
     pub fn active_connection_count(&self) -> usize {
         self.connected_clients.len()
+    }
+
+    /// Graceful shutdown - cancel all active runs
+    pub async fn shutdown(&self) {
+        let active_count = self.active_executors.len();
+        if active_count > 0 {
+            tracing::info!("Cancelling {} active run(s)...", active_count);
+        }
+
+        // Cancel global shutdown token
+        self.shutdown_token.cancel();
+
+        // Cancel all active executors
+        for entry in self.active_executors.iter() {
+            entry.value().cancel();
+        }
+
+        // Wait briefly for cleanup
+        if active_count > 0 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 }
 

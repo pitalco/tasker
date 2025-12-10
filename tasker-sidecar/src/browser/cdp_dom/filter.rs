@@ -146,8 +146,10 @@ fn should_propagate_bounds(node: &EnhancedDOMNode) -> bool {
         return false;
     }
 
-    let propagating_tags = ["a", "button"];
-    let propagating_roles = ["button", "link", "combobox"];
+    // Tags that typically wrap clickable content
+    let propagating_tags = ["a", "button", "summary", "label"];
+    // Roles that act as container interactions
+    let propagating_roles = ["button", "link", "combobox", "menuitem", "tab", "listitem"];
 
     if propagating_tags.contains(&node.tag_name.as_str()) {
         return true;
@@ -165,13 +167,30 @@ fn should_propagate_bounds(node: &EnhancedDOMNode) -> bool {
 /// Check if element is an exception that shouldn't be filtered
 fn is_exception_element(node: &EnhancedDOMNode) -> bool {
     // Form elements need individual interaction
-    let form_tags = ["input", "select", "textarea", "label"];
+    let form_tags = ["input", "select", "textarea", "label", "option"];
     if form_tags.contains(&node.tag_name.as_str()) {
         return true;
     }
 
-    // Elements with explicit handlers
-    if node.attributes.contains_key("onclick") {
+    // Interactive ARIA roles should be preserved
+    let interactive_roles = [
+        "button", "link", "checkbox", "radio", "menuitem",
+        "tab", "textbox", "combobox", "slider", "switch",
+        "searchbox", "spinbutton", "option",
+    ];
+    if let Some(role) = node.attributes.get("role") {
+        if interactive_roles.contains(&role.as_str()) {
+            return true;
+        }
+    }
+
+    // Elements with explicit event handlers
+    if node.attributes.contains_key("onclick")
+        || node.attributes.contains_key("onmousedown")
+        || node.attributes.contains_key("onmouseup")
+        || node.attributes.contains_key("data-action")
+        || node.attributes.contains_key("data-click")
+    {
         return true;
     }
 
@@ -180,22 +199,59 @@ fn is_exception_element(node: &EnhancedDOMNode) -> bool {
         return true;
     }
 
+    // Elements with aria-haspopup (dropdowns, menus)
+    if node.attributes.contains_key("aria-haspopup") {
+        return true;
+    }
+
     false
 }
 
 /// Filter elements to only those in viewport
+/// This filters to only elements with valid bounds that are within the viewport
 pub fn filter_to_viewport(node: &mut EnhancedDOMNode, viewport: &DOMRect) {
-    mark_out_of_viewport(node, viewport);
+    let (total, filtered) = mark_out_of_viewport(node, viewport, 0, 0);
+    tracing::debug!(
+        "Viewport filter: {} total interactive, {} filtered out, {} remaining",
+        total,
+        filtered,
+        total - filtered
+    );
 }
 
-fn mark_out_of_viewport(node: &mut EnhancedDOMNode, viewport: &DOMRect) {
-    if let Some(layout) = &node.layout {
-        if !viewport.intersects(&layout.bounds) {
-            node.is_visible = false;
+fn mark_out_of_viewport(
+    node: &mut EnhancedDOMNode,
+    viewport: &DOMRect,
+    mut total: usize,
+    mut filtered: usize,
+) -> (usize, usize) {
+    if node.is_interactive {
+        total += 1;
+
+        if let Some(layout) = &node.layout {
+            let bounds = &layout.bounds;
+
+            // Filter out if:
+            // 1. Has zero/invalid bounds
+            // 2. Is completely outside viewport
+            // 3. Is below the viewport fold (y >= viewport.height)
+            let has_valid_bounds = bounds.width > 0.0 && bounds.height > 0.0;
+            let in_viewport = viewport.intersects(bounds);
+            let above_fold = bounds.y < viewport.height;
+
+            if !has_valid_bounds || !in_viewport || !above_fold {
+                node.is_visible = false;
+                filtered += 1;
+            }
         }
+        // If no layout, keep the element (we can't determine position)
     }
 
     for child in &mut node.children {
-        mark_out_of_viewport(child, viewport);
+        let (t, f) = mark_out_of_viewport(child, viewport, total, filtered);
+        total = t;
+        filtered = f;
     }
+
+    (total, filtered)
 }

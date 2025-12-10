@@ -31,6 +31,21 @@ enum LLMResponse {
 }
 
 impl LLMResponse {
+    /// Extract text content from the response (if any)
+    fn text_content(&self) -> Option<String> {
+        match self {
+            LLMResponse::Genai(res) => {
+                res.first_text().map(|s| s.to_string())
+            }
+            LLMResponse::Railway(res) => {
+                res.choices.first()
+                    .and_then(|c| c.message.content.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            }
+        }
+    }
+
     /// Extract tool calls from either response type
     fn into_tool_calls(self) -> Vec<UnifiedToolCall> {
         match self {
@@ -66,11 +81,29 @@ fn extract_railway_tool_calls(response: &RailwayChatResponse) -> Vec<UnifiedTool
                             .unwrap_or("")
                             .to_string();
 
-                        // Arguments come as a JSON string that needs parsing
-                        let arguments = func.get("arguments")
-                            .and_then(|v| v.as_str())
-                            .and_then(|s| serde_json::from_str(s).ok())
-                            .unwrap_or(Value::Object(serde_json::Map::new()));
+                        // Arguments can come as either:
+                        // 1. A JSON string that needs parsing (OpenAI format): "{ \"index\": 5 }"
+                        // 2. An already-parsed JSON object (some APIs): { "index": 5 }
+                        let arguments = match func.get("arguments") {
+                            Some(Value::String(s)) => {
+                                // Case 1: Arguments as JSON string - parse it
+                                serde_json::from_str(s).unwrap_or_else(|e| {
+                                    tracing::warn!("Failed to parse tool arguments JSON string: {} - input: {}", e, s);
+                                    Value::Object(serde_json::Map::new())
+                                })
+                            }
+                            Some(Value::Object(obj)) => {
+                                // Case 2: Arguments already as JSON object
+                                Value::Object(obj.clone())
+                            }
+                            Some(other) => {
+                                tracing::warn!("Unexpected tool arguments type: {:?}", other);
+                                Value::Object(serde_json::Map::new())
+                            }
+                            None => {
+                                Value::Object(serde_json::Map::new())
+                            }
+                        };
 
                         tool_calls.push(UnifiedToolCall {
                             call_id: id.to_string(),
@@ -351,7 +384,13 @@ Keep taking actions until the condition above is clearly met.
             };
             first_iteration = false;
 
-            self.logger.debug(run_id, format!("Step {}: Calling LLM", step_number + 1));
+            // Log what we're sending to LLM
+            let step_log = format!(
+                "Step {}/{} | Sending {} messages to LLM",
+                step_number + 1, max_steps, history.len() + 1 // +1 for current page state
+            );
+            tracing::info!("{}", step_log);
+            self.logger.info(run_id, step_log);
 
             // Rate limiting: ensure minimum delay between LLM calls
             if let Some(last_call) = last_llm_call {
@@ -429,12 +468,20 @@ Keep taking actions until the condition above is clearly met.
                 }
             };
 
+            // Extract text content before consuming the response
+            let text_content = llm_response.text_content();
+
             // Check for tool calls
             let tool_calls = llm_response.into_tool_calls();
 
             if tool_calls.is_empty() {
-                // No tool calls - model might have responded with text
-                self.logger.info(run_id, "No tool calls in response, task may be complete");
+                // No tool calls - use text content as the result if present
+                if let Some(content) = text_content {
+                    self.logger.info(run_id, "LLM returned text response, completing task");
+                    self.logger.result(run_id, &content);
+                } else {
+                    self.logger.info(run_id, "No tool calls in response, task may be complete");
+                }
                 self.logger.status(run_id, RunStatus::Completed, None);
                 break;
             }
@@ -452,7 +499,12 @@ Keep taking actions until the condition above is clearly met.
                 // Resolve variables in parameters before execution
                 let resolved_params = resolve_variables(&params, &variables);
 
-                self.logger.info(run_id, format!("Executing tool: {} with params: {}", tool_name, resolved_params));
+                // Log tool call in function(args) format
+                let params_str = serde_json::to_string(&resolved_params).unwrap_or_default();
+                let params_short: String = params_str.chars().take(80).collect();
+                let tool_log = format!("{}({})", tool_name, params_short);
+                tracing::info!("{}", tool_log);
+                self.logger.info(run_id, tool_log);
 
                 // Create step record (store original params for logging, use resolved for execution)
                 let mut step = RunStep::new(
@@ -474,6 +526,16 @@ Keep taking actions until the condition above is clearly met.
                 };
 
                 let duration_ms = start.elapsed().as_millis() as i64;
+
+                // Log tool result
+                let result_log = format!(
+                    "{} -> {} ({}ms)",
+                    tool_name,
+                    if result.success { "success" } else { "failed" },
+                    duration_ms
+                );
+                tracing::info!("{}", result_log);
+                self.logger.info(run_id, result_log);
 
                 // Update step with result
                 step.complete(
@@ -540,29 +602,6 @@ Keep taking actions until the condition above is clearly met.
             if is_done {
                 self.logger.info(run_id, "Task completed via done tool");
                 break;
-            }
-
-            // TRUNCATE FIRST: Keep system + initial user + last N complete steps
-            // This prevents memory spikes by truncating BEFORE adding new messages
-            // Step = User (page state) + Assistant (tool calls) + Tool response(s)
-            // CRITICAL: Tool calls and responses MUST stay paired
-            const MAX_HISTORY_STEPS: usize = 10;
-
-            if history.len() > 2 {
-                // Find step boundaries - each step starts with User message after index 1
-                let mut step_starts: Vec<usize> = Vec::new();
-                for i in 2..history.len() {
-                    if matches!(history[i].role, genai::chat::ChatRole::User) {
-                        step_starts.push(i);
-                    }
-                }
-
-                // Keep only last MAX_HISTORY_STEPS (minus 1 to make room for new step)
-                if step_starts.len() >= MAX_HISTORY_STEPS {
-                    let keep_from = step_starts[step_starts.len() - (MAX_HISTORY_STEPS - 1)];
-                    history.drain(2..keep_from);
-                    tracing::debug!("Truncated history, keeping last {} steps", MAX_HISTORY_STEPS - 1);
-                }
             }
 
             // Add to history (text-only, no screenshots):

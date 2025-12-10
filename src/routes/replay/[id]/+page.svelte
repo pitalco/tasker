@@ -51,6 +51,7 @@
 		'read_file': 'Read file',
 		'write_file': 'Wrote file',
 		'replace_in_file': 'Replaced in file',
+		'save_memory': 'Saved to memory',
 		'done': 'Completed task'
 	};
 
@@ -528,13 +529,20 @@
 				<div class="border-3 border-black p-4 max-h-64 overflow-y-auto" style="box-shadow: 2px 2px 0 0 #000;">
 					<div class="text-sm font-bold text-black/60 uppercase mb-2">Results Log</div>
 					{#each results as result, i}
-						<div class="flex items-center gap-2 py-1 text-sm font-medium">
-							<span class="w-5 h-5 flex items-center justify-center text-xs font-bold {result.success ? 'bg-brutal-lime' : 'bg-brutal-magenta'}">
-								{result.success ? '✓' : '✗'}
-							</span>
-							<span>Step {i + 1}: {getToolDisplay(result.tool_name)}</span>
-							{#if result.error}
-								<span class="text-black/60">- {result.error}</span>
+						<div class="py-1 text-sm font-medium">
+							<div class="flex items-center gap-2">
+								<span class="w-5 h-5 flex items-center justify-center text-xs font-bold {result.success ? 'bg-brutal-lime' : 'bg-brutal-magenta'}">
+									{result.success ? '✓' : '✗'}
+								</span>
+								<span>Step {i + 1}: {getToolDisplay(result.tool_name)}</span>
+								{#if result.error}
+									<span class="text-black/60">- {result.error}</span>
+								{/if}
+							</div>
+							{#if result.tool_name === 'save_memory' && result.tool_params}
+								<div class="ml-7 mt-1 p-2 bg-brutal-yellow/30 border-2 border-black text-xs font-mono max-h-24 overflow-y-auto">
+									{result.tool_params}
+								</div>
 							{/if}
 						</div>
 					{/each}

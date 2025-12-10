@@ -5,6 +5,7 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::browser::BrowserManager;
 use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse, StepResult, Viewport};
@@ -144,6 +145,10 @@ pub async fn start_replay(
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);
+    let cancel_token = executor.cancel_token();
+
+    // Store cancel token for external cancellation
+    state.active_executors.insert(run_id.clone(), cancel_token);
 
     // Subscribe to logger events and forward to WebSocket
     let mut event_rx = logger.subscribe();
@@ -194,21 +199,32 @@ pub async fn start_replay(
     let browser_for_cleanup = Arc::clone(&browser);
     let state_for_cleanup = Arc::clone(&state);
     let run_id_for_cleanup = run_id.clone();
+    let shutdown_token = state.shutdown_token.clone();
 
     tokio::spawn(async move {
-        let result = executor.execute(&run_for_exec).await;
+        // Listen for both executor completion and global shutdown
+        let result = tokio::select! {
+            res = executor.execute(&run_for_exec) => res,
+            _ = shutdown_token.cancelled() => {
+                // Global shutdown - cancel the executor
+                executor.cancel();
+                // Give executor time to handle cancellation
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Err(anyhow::anyhow!("Process shutdown"))
+            }
+        };
 
-        if let Err(e) = result {
-            tracing::error!("Run execution failed: {}", e);
+        match &result {
+            Ok(()) => tracing::info!("Run {} finished", run_id_for_cleanup),
+            Err(e) => tracing::warn!("Run {} interrupted: {}", run_id_for_cleanup, e),
         }
 
         // Clean up browser
         let _ = browser_for_cleanup.close().await;
 
-        // Remove from active runs
+        // Remove from tracking maps
         state_for_cleanup.active_runs.remove(&run_id_for_cleanup);
-
-        tracing::info!("Run {} completed and cleaned up", run_id_for_cleanup);
+        state_for_cleanup.active_executors.remove(&run_id_for_cleanup);
     });
 
     tracing::info!("Started run {} for workflow: {}", run_id, workflow.id);
@@ -232,8 +248,16 @@ pub async fn stop_replay(
         )
     })?;
 
+    // Cancel the executor if running
+    if let Some((_, token)) = state.active_executors.remove(&session_id) {
+        token.cancel();
+        // Give executor time to handle cancellation gracefully
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        tracing::info!("Cancelled executor for run {}", session_id);
+    }
+
     // Update status to cancelled in database
-    repo.update_run_status(&session_id, RunStatus::Cancelled, None)
+    repo.update_run_status(&session_id, RunStatus::Cancelled, Some("Cancelled by user"))
         .map_err(|e| {
             tracing::error!("Failed to cancel run: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())

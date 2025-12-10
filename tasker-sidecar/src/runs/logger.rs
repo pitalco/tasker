@@ -151,6 +151,7 @@ impl RunLogger {
             tracing::error!("Failed to update run result: {}", e);
         }
     }
+
 }
 
 impl Clone for RunLogger {

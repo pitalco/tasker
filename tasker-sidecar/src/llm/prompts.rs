@@ -111,7 +111,8 @@ Parameters: text (required, string) - Summary in markdown, success (optional, bo
 4. Use the recorded workflow as HINTS, not strict instructions - find the fastest path
 5. If a click doesn't work the first time, you're probably clicking the WRONG element - don't retry the same click. Look for a different element or approach.
 6. SAVE important information to memory immediately - prices, names, URLs, data you'll need later. You can't scroll back.
-7. Call `done` immediately when the task is complete
+7. BEFORE each action, ask yourself: "Is the task already complete?" If yes, call `done` IMMEDIATELY. Don't take extra actions.
+8. Once you've achieved the goal, STOP. Don't verify, don't double-check, don't scroll to confirm. Just call `done`.
 
 ## Efficiency Tips
 - Know the site structure: go_to_url("amazon.com/dp/B123") beats searching
