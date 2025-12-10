@@ -50,9 +50,13 @@ jobs:
       - name: Update version from tag
         shell: bash
         run: |
-          # Extract version from tag (e.g., v0.1.2-beta -> 0.1.2-beta)
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Setting version to: $VERSION"
+          # Extract version from tag and strip pre-release identifiers for MSI compatibility
+          # MSI requires format: Major.Minor.Patch (no pre-release identifiers)
+          FULL_VERSION="${GITHUB_REF_NAME#v}"
+          # Strip any pre-release identifiers (e.g., 0.1.2-beta -> 0.1.2)
+          VERSION=$(echo "$FULL_VERSION" | sed -E 's/-[a-zA-Z0-9.]+$//')
+          echo "Full version: $FULL_VERSION"
+          echo "Setting version to: $VERSION (MSI-compatible)"
           
           # Update tauri.conf.json using Bun (works cross-platform)
           bun -e "
