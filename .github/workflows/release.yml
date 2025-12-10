@@ -47,6 +47,29 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Update version from tag
+        shell: bash
+        run: |
+          # Extract version from tag (e.g., v0.1.2-beta -> 0.1.2-beta)
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting version to: $VERSION"
+          
+          # Update tauri.conf.json using Bun (works cross-platform)
+          bun -e "
+            const fs = require('fs');
+            const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            config.version = '$VERSION';
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(config, null, 2) + '\n');
+          "
+          
+          # Update Cargo.toml for consistency (using Bun for cross-platform)
+          bun -e "
+            const fs = require('fs');
+            const content = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            const updated = content.replace(/^version = \".*\"/m, 'version = \"$VERSION\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', updated);
+          "
+
       # Build sidecar for Windows
       - name: Build sidecar (Windows)
         if: matrix.platform == 'windows-latest'
@@ -81,6 +104,16 @@ jobs:
             target/x86_64-apple-darwin/release/tasker-sidecar \
             -output target/release/tasker-sidecar-universal-apple-darwin
 
+      - name: Detect prerelease status
+        id: prerelease
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ -(beta|alpha|rc|pre) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -90,5 +123,5 @@ jobs:
           releaseName: 'Tasker ${{ github.ref_name }}'
           releaseBody: 'Download Tasker for your platform below.'
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ steps.prerelease.outputs.prerelease }}
           args: ${{ matrix.args }}
