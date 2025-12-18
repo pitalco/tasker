@@ -33,6 +33,8 @@ pub struct BrowserManager {
     active_tab: Arc<Mutex<usize>>,
     /// Lock to prevent concurrent browser launches (race condition fix)
     launch_lock: tokio::sync::Mutex<()>,
+    /// Whether browser is running in headless mode
+    headless: Arc<Mutex<bool>>,
 }
 
 impl BrowserManager {
@@ -42,6 +44,7 @@ impl BrowserManager {
             pages: Arc::new(Mutex::new(Vec::new())),
             active_tab: Arc::new(Mutex::new(0)),
             launch_lock: tokio::sync::Mutex::new(()),
+            headless: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -155,27 +158,38 @@ impl BrowserManager {
             }
         };
 
-        // Set viewport
-        let emulation_params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
-            .width(viewport.width as i64)
-            .height(viewport.height as i64)
-            .device_scale_factor(1.0)
-            .mobile(false)
-            .build()
-            .map_err(|e| anyhow!("Failed to build viewport params: {}", e))?;
+        // Configure viewport based on mode
+        if headless {
+            // For headless mode, set explicit viewport size
+            let emulation_params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
+                .width(viewport.width as i64)
+                .height(viewport.height as i64)
+                .device_scale_factor(1.0)
+                .mobile(false)
+                .build()
+                .map_err(|e| anyhow!("Failed to build viewport params: {}", e))?;
 
-        page.execute(emulation_params)
-            .await
-            .map_err(|e| anyhow!("Failed to set viewport: {}", e))?;
+            page.execute(emulation_params)
+                .await
+                .map_err(|e| anyhow!("Failed to set viewport: {}", e))?;
+        } else {
+            // For headed mode, explicitly CLEAR any viewport emulation
+            // This ensures the browser uses its natural maximized window size
+            use chromiumoxide::cdp::browser_protocol::emulation::ClearDeviceMetricsOverrideParams;
+            page.execute(ClearDeviceMetricsOverrideParams::default())
+                .await
+                .ok(); // Ignore errors - this is best-effort cleanup
+        }
 
-        // Store browser and page
+        // Store browser, page, and headless state
         *self.browser.lock().await = Some(browser);
+        *self.headless.lock().await = headless;
         let mut pages = self.pages.lock().await;
         pages.clear(); // Clear any old pages
         pages.push(page);
         *self.active_tab.lock().await = 0;
 
-        tracing::info!("Browser launched (single window)");
+        tracing::info!("Browser launched (single window, headless={})", headless);
         Ok(())
     }
 
@@ -195,6 +209,15 @@ impl BrowserManager {
 
         let page = browser.new_page(url).await
             .map_err(|e| anyhow!("Failed to create new tab: {}", e))?;
+
+        // For headed mode, clear any viewport emulation so tab uses natural window size
+        let is_headless = *self.headless.lock().await;
+        if !is_headless {
+            use chromiumoxide::cdp::browser_protocol::emulation::ClearDeviceMetricsOverrideParams;
+            page.execute(ClearDeviceMetricsOverrideParams::default())
+                .await
+                .ok(); // Ignore errors - best-effort cleanup
+        }
 
         let mut pages = self.pages.lock().await;
         pages.push(page);
