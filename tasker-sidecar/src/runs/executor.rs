@@ -368,7 +368,7 @@ Keep taking actions until the condition above is clearly met.
 
             // Build fresh request: history (text-only) + current page state (WITH screenshot)
             // This way only the LATEST screenshot is sent, not all historical ones
-            let (page_state_text, chat_req) = if first_iteration {
+            let (_page_state_text, chat_req) = if first_iteration {
                 // First iteration: use initial prompt + screenshot
                 // But ALSO populate selector_map for tools to use
                 let dom_result = self.browser.get_indexed_elements().await.unwrap_or_default();
@@ -604,17 +604,27 @@ Keep taking actions until the condition above is clearly met.
                 break;
             }
 
-            // Add to history (text-only, no screenshots):
-            // 1. The page state text we just sent
-            history.push(ChatMessage::user(page_state_text));
+            // Add to history: ONLY tool calls and responses (no page state - that's always fresh)
+            // The current page state is always included in the current message, so we don't need old ones
+            // Memory system handles important data persistence
 
-            // 2. The assistant's tool calls
+            // 1. The assistant's tool calls
             let genai_tool_calls = to_genai_tool_calls(&tool_calls);
             history.push(ChatMessage::from(genai_tool_calls));
 
-            // 3. The tool responses
+            // 2. The tool responses
             for response in tool_responses {
                 history.push(ChatMessage::from(response));
+            }
+
+            // Sliding window: keep only system prompt + initial user prompt + last 10 steps worth of messages
+            // Each step adds ~2-3 messages (tool calls + responses), so keep last ~30 messages after the first 2
+            const MAX_HISTORY_MESSAGES: usize = 32; // 2 initial + 30 for ~10 steps
+            if history.len() > MAX_HISTORY_MESSAGES {
+                // Keep first 2 (system + initial user prompt) and last 30
+                let to_remove = history.len() - MAX_HISTORY_MESSAGES;
+                history.drain(2..2 + to_remove);
+                tracing::debug!("Trimmed {} old messages from history", to_remove);
             }
         }
 
