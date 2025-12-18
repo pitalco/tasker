@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use image::GenericImageView;
 use chromiumoxide::cdp::browser_protocol::dom::{
     BackendNodeId as CdpBackendNodeId, DescribeNodeParams, FocusParams, GetBoxModelParams,
     ResolveNodeParams, ScrollIntoViewIfNeededParams,
