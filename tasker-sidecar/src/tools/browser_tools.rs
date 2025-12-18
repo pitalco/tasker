@@ -232,6 +232,58 @@ impl Tool for ClickTool {
     }
 }
 
+/// Hover over an element to reveal tooltips, dropdowns, or hidden content
+pub struct HoverTool;
+
+#[async_trait]
+impl Tool for HoverTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "hover_element".to_string(),
+            description: "Hover over an element to trigger hover states, reveal tooltips, dropdown menus, or hidden content".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "The 1-based index of the element to hover over (e.g., [1], [2], [3])"
+                    }
+                },
+                "required": ["index"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let index = match parse_int_param(&params, "index") {
+            Some(i) => i,
+            None => return Ok(ToolResult::error(
+                "Missing 'index' parameter. Use the element number from the list, e.g. index: 5"
+            )),
+        };
+
+        // Look up backend_node_id from selector map
+        let selector_map = ctx.selector_map.read().await;
+        let backend_id = match selector_map.get_backend_id(index) {
+            Some(id) => id,
+            None => {
+                let msg = if selector_map.is_empty() {
+                    format!("Element index {} not found. No interactive elements on page.", index)
+                } else {
+                    format!("Element index {} not found. Valid indices: 1-{}", index, selector_map.len())
+                };
+                return Ok(ToolResult::error(msg));
+            }
+        };
+        drop(selector_map); // Release read lock before async operations
+
+        match ctx.browser.hover_by_backend_id(backend_id).await {
+            Ok(()) => Ok(ToolResult::success(format!("Hovered over element [{}]. Check the page for tooltips or revealed content.", index))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to hover over element [{}]: {}", index, e)))
+        }
+    }
+}
+
 /// Input text into a field
 pub struct InputTextTool;
 
@@ -1367,6 +1419,7 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
 
     // Interaction
     registry.register(Arc::new(ClickTool));
+    registry.register(Arc::new(HoverTool));
     registry.register(Arc::new(InputTextTool));
     registry.register(Arc::new(ClearInputTool));
     registry.register(Arc::new(ScrollTool));

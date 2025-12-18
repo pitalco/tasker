@@ -29,6 +29,12 @@ Tool: click_element
 Parameter: index (required, integer) - The element index from the list, e.g. 1, 2, 3
 Example: To click element [5], call click_element with index: 5
 
+**Hover over an element:**
+Tool: hover_element
+Parameter: index (required, integer) - The element index from the list
+Use this to reveal tooltips, dropdown menus, or hidden content that appears on hover.
+Example: To hover over element [3], call hover_element with index: 3
+
 **Type into an input field:**
 Tool: input_text
 Parameters: index (required, integer), text (required, string)

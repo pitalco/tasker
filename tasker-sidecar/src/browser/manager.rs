@@ -541,6 +541,103 @@ impl BrowserManager {
         }
     }
 
+    /// Hover over element by backend_node_id to trigger hover states/tooltips
+    #[instrument(skip(self), fields(backend_id = backend_id))]
+    pub async fn hover_by_backend_id(&self, backend_id: BackendNodeId) -> Result<()> {
+        let page = self.get_active_page().await
+            .context("Failed to get active page for hover")?;
+
+        // First, try to scroll element into view
+        let scroll_params = ScrollIntoViewIfNeededParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+            rect: None,
+        };
+        let _ = page.execute(scroll_params).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Highlight element with yellow flickering border
+        self.highlight_element(&page, backend_id).await;
+
+        // Get element geometry
+        let box_params = GetBoxModelParams {
+            node_id: None,
+            backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+            object_id: None,
+        };
+
+        match page.execute(box_params).await {
+            Ok(box_result) => {
+                let model = box_result.result.model;
+                let content = model.content.inner();
+
+                // Calculate center point
+                let center_x = (content[0] + content[2] + content[4] + content[6]) / 4.0;
+                let center_y = (content[1] + content[3] + content[5] + content[7]) / 4.0;
+
+                // Dispatch mouse move event to trigger hover
+                let mouse_move = DispatchMouseEventParams {
+                    r#type: DispatchMouseEventType::MouseMoved,
+                    x: center_x,
+                    y: center_y,
+                    button: None,
+                    click_count: None,
+                    modifiers: None,
+                    timestamp: None,
+                    delta_x: None,
+                    delta_y: None,
+                    pointer_type: None,
+                    buttons: None,
+                    tangential_pressure: None,
+                    tilt_x: None,
+                    tilt_y: None,
+                    twist: None,
+                    force: None,
+                };
+
+                page.execute(mouse_move).await
+                    .map_err(|e| anyhow!("Failed to dispatch mousemove: {}", e))?;
+
+                // Small delay to let hover effects appear
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                Ok(())
+            }
+            Err(box_err) => {
+                // Fallback: Use JavaScript to trigger hover events
+                tracing::debug!("Box model failed for {}, trying JS hover fallback: {}", backend_id, box_err);
+
+                let resolve_params = ResolveNodeParams {
+                    node_id: None,
+                    backend_node_id: Some(CdpBackendNodeId::new(backend_id)),
+                    object_group: Some("hover-fallback".to_string()),
+                    execution_context_id: None,
+                };
+
+                let resolve_result = page.execute(resolve_params).await
+                    .map_err(|e| anyhow!("Failed to resolve node {}: {}", backend_id, e))?;
+
+                let object_id = resolve_result.result.object.object_id
+                    .ok_or_else(|| anyhow!("Node {} has no object ID", backend_id))?;
+
+                // Dispatch mouseenter and mouseover events via JavaScript
+                let call_params = CallFunctionOnParams::builder()
+                    .object_id(object_id)
+                    .function_declaration("function() { this.scrollIntoView({block: 'center'}); this.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true})); this.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})); }")
+                    .build()
+                    .map_err(|e| anyhow!("Failed to build call params: {}", e))?;
+
+                page.execute(call_params).await
+                    .map_err(|e| anyhow!("JS hover fallback failed for {}: {}", backend_id, e))?;
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                Ok(())
+            }
+        }
+    }
+
     /// Highlight element with yellow flickering border (visual feedback before click)
     /// This is non-blocking - the highlight animation runs in the browser while we continue
     async fn highlight_element(&self, page: &Page, backend_id: BackendNodeId) {
