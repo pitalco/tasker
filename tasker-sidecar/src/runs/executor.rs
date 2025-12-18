@@ -658,9 +658,9 @@ Keep taking actions until the condition above is clearly met.
         let mut parts = vec![ContentPart::from_text(current_text)];
         if let Some(screenshot_base64) = screenshot {
             parts.push(ContentPart::from_binary_base64(
-                "image/png",
+                "image/jpeg",
                 screenshot_base64,
-                Some("screenshot.png".to_string()),
+                Some("screenshot.jpg".to_string()),
             ));
         }
         req = req.append_message(ChatMessage::user(parts));

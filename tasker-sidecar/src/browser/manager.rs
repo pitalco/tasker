@@ -292,10 +292,12 @@ impl BrowserManager {
             .ok_or_else(|| anyhow!("URL is None"))
     }
 
-    /// Take a screenshot of the current page
+    /// Take a screenshot of the current page, resized to reduce token usage
     pub async fn screenshot(&self) -> Result<String> {
         let page = self.get_active_page().await?;
-        let screenshot = page
+
+        // Capture as PNG first (lossless for resizing)
+        let screenshot_bytes = page
             .screenshot(
                 chromiumoxide::page::ScreenshotParams::builder()
                     .format(CaptureScreenshotFormat::Png)
@@ -304,7 +306,29 @@ impl BrowserManager {
             .await
             .map_err(|e| anyhow!("Failed to take screenshot: {}", e))?;
 
-        Ok(base64::engine::general_purpose::STANDARD.encode(screenshot))
+        // Load and resize the image to reduce token usage
+        // Target: 1280px wide (or less), maintaining aspect ratio
+        let img = image::load_from_memory(&screenshot_bytes)
+            .map_err(|e| anyhow!("Failed to decode screenshot: {}", e))?;
+
+        let (width, height) = img.dimensions();
+        let max_width = 1280u32;
+
+        let resized = if width > max_width {
+            let scale = max_width as f32 / width as f32;
+            let new_height = (height as f32 * scale) as u32;
+            img.resize(max_width, new_height, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
+
+        // Encode as JPEG with good quality
+        let mut jpeg_bytes = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+        resized.write_to(&mut cursor, image::ImageFormat::Jpeg)
+            .map_err(|e| anyhow!("Failed to encode screenshot as JPEG: {}", e))?;
+
+        Ok(base64::engine::general_purpose::STANDARD.encode(jpeg_bytes))
     }
 
     /// Get the DOM content of the page
