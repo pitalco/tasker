@@ -294,7 +294,13 @@ impl BrowserManager {
     }
 
     /// Take a screenshot of the current page, resized to reduce token usage
+    /// If full_page is true, captures the entire scrollable page
     pub async fn screenshot(&self) -> Result<String> {
+        self.screenshot_with_options(false).await
+    }
+
+    /// Take a screenshot with options
+    pub async fn screenshot_with_options(&self, full_page: bool) -> Result<String> {
         let page = self.get_active_page().await?;
 
         // Capture as PNG first (lossless for resizing)
@@ -302,6 +308,7 @@ impl BrowserManager {
             .screenshot(
                 chromiumoxide::page::ScreenshotParams::builder()
                     .format(CaptureScreenshotFormat::Png)
+                    .capture_beyond_viewport(full_page)
                     .build(),
             )
             .await

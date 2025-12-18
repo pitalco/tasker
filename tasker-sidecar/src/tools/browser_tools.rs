@@ -590,17 +590,30 @@ impl Tool for ScreenshotTool {
             description: "Take a screenshot of the current page state".to_string(),
             parameters: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "full_page": {
+                        "type": "boolean",
+                        "description": "If true, captures the entire scrollable page. If false (default), captures only the visible viewport.",
+                        "default": false
+                    }
+                },
                 "required": []
             }),
         }
     }
 
-    async fn execute(&self, _params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let screenshot_base64 = ctx.browser.screenshot().await?;
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
+        let full_page = params["full_page"].as_bool().unwrap_or(false);
+        let screenshot_base64 = ctx.browser.screenshot_with_options(full_page).await?;
+
+        let msg = if full_page {
+            "Full page screenshot captured successfully"
+        } else {
+            "Viewport screenshot captured successfully"
+        };
 
         Ok(ToolResult::success_with_data(
-            "Screenshot captured successfully".to_string(),
+            msg.to_string(),
             json!({ "screenshot": screenshot_base64 })
         ))
     }
