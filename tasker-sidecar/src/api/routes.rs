@@ -1,19 +1,27 @@
 use axum::{
+    http::{HeaderValue, Method},
     routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 use super::handlers::{files, health, providers, recording, replay, runs, workflow};
 use super::state::AppState;
 use super::websocket::ws_handler;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
+    // SECURITY: Restrict CORS to localhost only - sidecar should only be accessed locally
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin([
+            "http://localhost:1420".parse::<HeaderValue>().unwrap(),
+            "http://localhost:5173".parse::<HeaderValue>().unwrap(),
+            "http://127.0.0.1:1420".parse::<HeaderValue>().unwrap(),
+            "http://127.0.0.1:5173".parse::<HeaderValue>().unwrap(),
+            "tauri://localhost".parse::<HeaderValue>().unwrap(),
+        ])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_headers(tower_http::cors::Any);
 
     Router::new()
         // Health check

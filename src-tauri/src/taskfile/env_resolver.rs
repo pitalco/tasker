@@ -2,6 +2,26 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::sync::OnceLock;
+
+// SECURITY: Use static OnceLock to compile regexes once, avoiding potential panics on each call
+// These patterns are valid and will compile successfully, but using OnceLock is safer and more efficient
+static ENV_VAR_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
+static WORKFLOW_VAR_REGEX: OnceLock<regex_lite::Regex> = OnceLock::new();
+
+fn get_env_var_regex() -> &'static regex_lite::Regex {
+    ENV_VAR_REGEX.get_or_init(|| {
+        regex_lite::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+            .expect("ENV_VAR_REGEX pattern is invalid - this is a bug")
+    })
+}
+
+fn get_workflow_var_regex() -> &'static regex_lite::Regex {
+    WORKFLOW_VAR_REGEX.get_or_init(|| {
+        regex_lite::Regex::new(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
+            .expect("WORKFLOW_VAR_REGEX pattern is invalid - this is a bug")
+    })
+}
 
 /// Resolves environment variable references in strings
 /// Supports two patterns:
@@ -49,7 +69,7 @@ impl EnvResolver {
 
     /// Resolve only environment variable references
     fn resolve_env_vars(&self, input: &str, unresolved: &mut Vec<UnresolvedVar>) -> String {
-        let re = regex_lite::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+        let re = get_env_var_regex();
 
         let mut result = input.to_string();
         for cap in re.captures_iter(input) {
@@ -73,7 +93,7 @@ impl EnvResolver {
 
     /// Resolve only workflow variable references
     fn resolve_workflow_vars(&self, input: &str, unresolved: &mut Vec<UnresolvedVar>) -> String {
-        let re = regex_lite::Regex::new(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}").unwrap();
+        let re = get_workflow_var_regex();
 
         let mut result = input.to_string();
         for cap in re.captures_iter(input) {
@@ -105,8 +125,7 @@ impl EnvResolver {
         let mut refs = Vec::new();
 
         // Extract ${ENV_VAR} references
-        let env_re = regex_lite::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
-        for cap in env_re.captures_iter(input) {
+        for cap in get_env_var_regex().captures_iter(input) {
             refs.push(VarReference {
                 name: cap[1].to_string(),
                 var_type: VarType::Environment,
@@ -115,8 +134,7 @@ impl EnvResolver {
         }
 
         // Extract {{variable}} references
-        let var_re = regex_lite::Regex::new(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}").unwrap();
-        for cap in var_re.captures_iter(input) {
+        for cap in get_workflow_var_regex().captures_iter(input) {
             refs.push(VarReference {
                 name: cap[1].to_string(),
                 var_type: VarType::Workflow,

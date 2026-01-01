@@ -12,9 +12,15 @@
 	import { getWebSocket, startSidecar } from '$lib/services/sidecarService';
 	import { listFilesForRun, deleteFile as deleteFileApi } from '$lib/services/filesService';
 	import { marked } from 'marked';
+	import DOMPurify from 'dompurify';
 	import type { RunStep } from '$lib/types/run';
 	import type { TaskerFile } from '$lib/types/file';
 	import FileList from '$lib/components/files/FileList.svelte';
+
+	// SECURITY: Sanitize HTML to prevent XSS attacks
+	function sanitizeHtml(html: string): string {
+		return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+	}
 
 	const runsState = getRunsState();
 	const ws = getWebSocket();
@@ -373,7 +379,7 @@
 		{#if activeTab === 'result' && runsState.currentRun?.result}
 			<div class="card-brutal bg-white p-6">
 				<div class="prose prose-lg max-w-none">
-					{@html marked(runsState.currentRun.result)}
+					{@html sanitizeHtml(marked(runsState.currentRun.result) as string)}
 				</div>
 			</div>
 		{/if}

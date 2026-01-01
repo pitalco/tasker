@@ -10,8 +10,6 @@ pub enum LLMProvider {
     Anthropic,
     OpenAI,
     Gemini,
-    #[serde(rename = "tasker-fast")]
-    TaskerFast, // Hosted model via Railway proxy
 }
 
 impl LLMProvider {
@@ -28,13 +26,7 @@ impl LLMProvider {
             LLMProvider::Anthropic => "ANTHROPIC_API_KEY",
             LLMProvider::OpenAI => "OPENAI_API_KEY",
             LLMProvider::Gemini => "GEMINI_API_KEY",
-            LLMProvider::TaskerFast => "TASKER_AUTH_TOKEN", // User's session token
         }
-    }
-
-    /// Check if this provider uses the Railway proxy
-    pub fn uses_railway_proxy(&self) -> bool {
-        matches!(self, LLMProvider::TaskerFast)
     }
 }
 
@@ -46,7 +38,6 @@ impl std::str::FromStr for LLMProvider {
             "anthropic" | "claude" => Ok(LLMProvider::Anthropic),
             "openai" | "gpt" => Ok(LLMProvider::OpenAI),
             "gemini" | "google" => Ok(LLMProvider::Gemini),
-            "tasker-fast" | "taskerfast" | "tasker" => Ok(LLMProvider::TaskerFast),
             _ => Err(anyhow!("Unknown LLM provider: {}", s)),
         }
     }
@@ -98,9 +89,9 @@ pub struct LLMClient {
 impl LLMClient {
     /// Create a new LLM client with the given configuration
     pub fn new(config: LLMConfig) -> Result<Self> {
-        // Set API key in environment if provided
+        // Set API key in environment if provided (using thread-safe helper)
         if let Some(ref api_key) = config.api_key {
-            std::env::set_var(config.provider.api_key_env_var(), api_key);
+            crate::config::set_api_key_env(config.provider.api_key_env_var(), api_key);
         }
 
         let client = Client::default();
@@ -179,17 +170,5 @@ mod tests {
             "gemini".parse::<LLMProvider>().unwrap(),
             LLMProvider::Gemini
         );
-        assert_eq!(
-            "tasker-fast".parse::<LLMProvider>().unwrap(),
-            LLMProvider::TaskerFast
-        );
-    }
-
-    #[test]
-    fn test_uses_railway_proxy() {
-        assert!(!LLMProvider::Anthropic.uses_railway_proxy());
-        assert!(!LLMProvider::OpenAI.uses_railway_proxy());
-        assert!(!LLMProvider::Gemini.uses_railway_proxy());
-        assert!(LLMProvider::TaskerFast.uses_railway_proxy());
     }
 }

@@ -110,8 +110,6 @@ pub fn run() {
             commands::auth::get_auth_token,
             commands::auth::clear_auth_token,
             commands::auth::check_auth_status,
-            commands::auth::open_checkout,
-            commands::auth::open_customer_portal,
             // Email/password auth
             commands::auth::sign_up_email,
             commands::auth::sign_in_email,

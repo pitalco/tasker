@@ -1,7 +1,33 @@
 use std::env;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use rusqlite::Connection;
 use serde::Deserialize;
+
+// SECURITY: Mutex to synchronize environment variable modifications
+// This prevents race conditions when multiple threads try to set API keys
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Safely set an environment variable with synchronization
+/// This is needed because std::env::set_var is not thread-safe
+pub fn set_api_key_env(env_var: &str, value: &str) {
+    // Acquire mutex to ensure only one thread modifies env at a time
+    let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: We're holding a mutex to prevent concurrent modifications
+    unsafe {
+        std::env::set_var(env_var, value);
+    }
+}
+
+/// Helper to get the environment variable name for a provider
+pub fn get_env_var_for_provider(provider: &str) -> &'static str {
+    match provider.to_lowercase().as_str() {
+        "anthropic" | "claude" => "ANTHROPIC_API_KEY",
+        "openai" | "gpt" => "OPENAI_API_KEY",
+        "gemini" | "google" => "GEMINI_API_KEY",
+        _ => "ANTHROPIC_API_KEY",
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {

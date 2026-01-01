@@ -11,7 +11,6 @@
 		getWebSocket,
 		type SidecarWebSocket
 	} from '$lib/services/sidecarService';
-	import { getAuthToken, checkAuthStatus } from '$lib/services/authService';
 	import { getSettings } from '$lib/services/settingsService';
 	import type { WorkflowStep } from '$lib/types/workflow';
 
@@ -42,15 +41,6 @@
 			if (!provider || !model) {
 				settingsError = 'Please configure a default AI provider and model in Settings before recording.';
 				settingsConfigured = false;
-			} else if (provider === 'tasker-fast') {
-				// Check if user has subscription for Tasker Fast
-				const auth = await checkAuthStatus();
-				if (!auth.has_subscription) {
-					settingsError = 'Tasker Fast requires an active subscription. Subscribe or configure an API key in Settings.';
-					settingsConfigured = false;
-				} else {
-					settingsConfigured = true;
-				}
 			} else {
 				// Check if API key is configured for the provider
 				const apiKeys = settings.llm_config.api_keys;
@@ -164,19 +154,8 @@
 		isSaving = true;
 
 		try {
-			// Get auth token if using Tasker Fast provider
-			let authToken: string | undefined;
-			try {
-				const settings = await getSettings();
-				if (settings.llm_config.default_provider === 'tasker-fast') {
-					authToken = (await getAuthToken()) ?? undefined;
-				}
-			} catch {
-				// If settings unavailable, continue without auth token
-			}
-
 			// Stop recording and generate task description via AI
-			const response = await stopRecording(sessionId, authToken);
+			const response = await stopRecording(sessionId);
 
 			// Disconnect WebSocket
 			ws?.disconnect();

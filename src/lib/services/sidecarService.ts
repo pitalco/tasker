@@ -76,8 +76,8 @@ export async function startRecording(options: StartRecordingOptions): Promise<Re
 	return invoke<RecordingResponse>('start_recording', { request: options });
 }
 
-export async function stopRecording(sessionId: string, authToken?: string): Promise<{ name: string; task_description: string }> {
-	return invoke<{ name: string; task_description: string }>('stop_recording', { sessionId, authToken });
+export async function stopRecording(sessionId: string): Promise<{ name: string; task_description: string }> {
+	return invoke<{ name: string; task_description: string }>('stop_recording', { sessionId });
 }
 
 export async function cancelRecording(sessionId: string): Promise<boolean> {

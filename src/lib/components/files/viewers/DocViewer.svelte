@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import mammoth from 'mammoth';
+	import DOMPurify from 'dompurify';
 	import { decodeBase64ToBytes } from '$lib/services/filesService';
 
 	let { contentBase64 }: { contentBase64: string } = $props();
@@ -13,7 +14,8 @@
 		try {
 			const bytes = decodeBase64ToBytes(contentBase64);
 			const result = await mammoth.convertToHtml({ arrayBuffer: bytes.buffer as ArrayBuffer });
-			html = result.value;
+			// SECURITY: Sanitize HTML to prevent XSS attacks
+			html = DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } });
 
 			if (result.messages.length > 0) {
 				console.warn('Mammoth warnings:', result.messages);

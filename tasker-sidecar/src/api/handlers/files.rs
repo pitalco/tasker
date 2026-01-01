@@ -12,6 +12,32 @@ use crate::runs::{FileListResponse, RunFileContent};
 
 use super::super::state::AppState;
 
+/// Sanitize filename to prevent header injection attacks
+/// Removes control characters and newlines that could be used for HTTP header injection
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .filter(|c| !c.is_control() && *c != '\r' && *c != '\n')
+        .collect()
+}
+
+/// Percent-encode filename per RFC 5987 for Content-Disposition header
+fn percent_encode_filename(filename: &str) -> String {
+    let mut encoded = String::new();
+    for byte in filename.bytes() {
+        // RFC 5987 attr-char: Allow ASCII alphanumeric and specific safe chars
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~')
+        {
+            encoded.push(byte as char);
+        } else {
+            // Percent-encode everything else
+            encoded.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    encoded
+}
+
 /// Query parameters for listing files
 #[derive(Debug, Deserialize)]
 pub struct ListFilesQuery {
@@ -109,13 +135,19 @@ pub async fn download_file(
         })?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "File not found".to_string()))?;
 
+    // SECURITY: Properly encode filename per RFC 5987 to prevent header injection
+    // Remove any characters that could be used for header injection
+    let safe_filename = sanitize_filename(&file.file_name);
+    let content_disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        safe_filename.replace('"', "\\\""),
+        percent_encode_filename(&file.file_name)
+    );
+
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, &file.mime_type)
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", file.file_name),
-        )
+        .header(header::CONTENT_DISPOSITION, content_disposition)
         .header(header::CONTENT_LENGTH, file.file_size.to_string())
         .body(Body::from(file.content))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

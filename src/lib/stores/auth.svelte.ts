@@ -9,15 +9,11 @@ class AuthStore {
 	isAuthenticated = $state(false);
 	userId = $state<string | null>(null);
 	email = $state<string | null>(null);
-	hasSubscription = $state(false);
 
 	// Loading states
 	isLoading = $state(true);
 	isSigningIn = $state(false);
 	error = $state<string | null>(null);
-
-	// Deep link cleanup function
-	private unlistenDeepLink: (() => void) | null = null;
 
 	constructor() {
 		// Initialize on construction
@@ -27,11 +23,6 @@ class AuthStore {
 	private async init() {
 		// Check initial auth status
 		await this.refresh();
-
-		// Set up deep link listener
-		this.unlistenDeepLink = await authService.onDeepLink(async (url) => {
-			await this.handleDeepLink(url);
-		});
 	}
 
 	async refresh() {
@@ -46,7 +37,6 @@ class AuthStore {
 			this.isAuthenticated = false;
 			this.userId = null;
 			this.email = null;
-			this.hasSubscription = false;
 		} finally {
 			this.isLoading = false;
 		}
@@ -56,7 +46,6 @@ class AuthStore {
 		this.isAuthenticated = state.is_authenticated;
 		this.userId = state.user_id;
 		this.email = state.email;
-		this.hasSubscription = state.has_subscription;
 	}
 
 	// Sign in with email/password
@@ -95,60 +84,19 @@ class AuthStore {
 		}
 	}
 
-	private async handleDeepLink(url: string) {
-		// Check for subscription result
-		const subscriptionResult = authService.parseSubscriptionResult(url);
-		if (subscriptionResult === 'success') {
-			// Refresh to get updated subscription status
-			await this.refresh();
-		}
-	}
-
 	async logout() {
 		try {
 			await authService.logout();
 			this.isAuthenticated = false;
 			this.userId = null;
 			this.email = null;
-			this.hasSubscription = false;
 		} catch (e) {
 			console.error('Failed to logout:', e);
 		}
 	}
 
-	async openCheckout() {
-		if (!this.isAuthenticated) {
-			this.error = 'Please sign in first';
-			return;
-		}
-
-		try {
-			await authService.openCheckout();
-		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to open checkout';
-			console.error('Failed to open checkout:', e);
-		}
-	}
-
-	async openCustomerPortal() {
-		if (!this.isAuthenticated || !this.hasSubscription) {
-			this.error = 'No active subscription';
-			return;
-		}
-
-		try {
-			await authService.openCustomerPortal();
-		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to open customer portal';
-			console.error('Failed to open customer portal:', e);
-		}
-	}
-
 	destroy() {
-		if (this.unlistenDeepLink) {
-			this.unlistenDeepLink();
-			this.unlistenDeepLink = null;
-		}
+		// Cleanup if needed
 	}
 }
 

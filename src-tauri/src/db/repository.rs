@@ -80,14 +80,17 @@ pub async fn create_workflow(req: CreateWorkflowRequest) -> Result<Workflow, sql
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    let steps_json = serde_json::to_string(&req.steps.unwrap_or_default()).unwrap();
-    let variables_json = serde_json::to_string(&req.variables.unwrap_or_default()).unwrap();
+    // SECURITY: Use expect() with descriptive messages instead of unwrap() for better debugging
+    let steps_json = serde_json::to_string(&req.steps.unwrap_or_default())
+        .expect("Failed to serialize steps - this should never happen with valid WorkflowStep types");
+    let variables_json = serde_json::to_string(&req.variables.unwrap_or_default())
+        .expect("Failed to serialize variables - this should never happen with valid HashMap types");
     let metadata_json = serde_json::to_string(&req.metadata.unwrap_or(WorkflowMetadata {
         start_url: None,
         llm_provider: None,
         recording_source: "manual".to_string(),
     }))
-    .unwrap();
+    .expect("Failed to serialize metadata - this should never happen with valid WorkflowMetadata types");
 
     sqlx::query(
         r#"
@@ -146,13 +149,16 @@ pub async fn update_workflow(
         workflow.task_description = Some(task_desc);
     }
     if let Some(steps) = req.steps {
-        workflow.steps_json = serde_json::to_string(&steps).unwrap();
+        workflow.steps_json = serde_json::to_string(&steps)
+            .expect("Failed to serialize steps - this should never happen with valid WorkflowStep types");
     }
     if let Some(variables) = req.variables {
-        workflow.variables_json = serde_json::to_string(&variables).unwrap();
+        workflow.variables_json = serde_json::to_string(&variables)
+            .expect("Failed to serialize variables - this should never happen with valid HashMap types");
     }
     if let Some(metadata) = req.metadata {
-        workflow.metadata_json = serde_json::to_string(&metadata).unwrap();
+        workflow.metadata_json = serde_json::to_string(&metadata)
+            .expect("Failed to serialize metadata - this should never happen with valid WorkflowMetadata types");
     }
     if let Some(stop_when) = req.stop_when {
         workflow.stop_when = Some(stop_when);
@@ -266,7 +272,8 @@ pub async fn update_settings(req: UpdateSettingsRequest) -> Result<AppSettings, 
         settings.default_max_steps = default_max_steps;
     }
 
-    let llm_config_json = serde_json::to_string(&settings.llm_config).unwrap();
+    let llm_config_json = serde_json::to_string(&settings.llm_config)
+        .expect("Failed to serialize LLM config - this should never happen with valid LLMConfig types");
 
     // Upsert settings (SQLite UPSERT)
     sqlx::query(

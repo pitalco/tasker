@@ -17,7 +17,6 @@
 		PROVIDER_MODELS,
 		type ApiKeys
 	} from '$lib/services/settingsService';
-	import { checkAuthStatus } from '$lib/services/authService';
 	import type { Workflow } from '$lib/types/workflow';
 
 	const workflowState = getWorkflowState();
@@ -70,18 +69,12 @@
 	// API keys from settings
 	let apiKeys = $state<ApiKeys>({});
 	let hasAnyKeys = $state(false);
-	let hasSubscription = $state(false);
 
 	const workflowId = $derived($page.params.id);
 
-	// Get available providers (those with keys configured OR subscription-based with active subscription)
+	// Get available providers (those with keys configured)
 	const availableProviders = $derived(
-		PROVIDERS.filter(p => {
-			if (p.requiresSubscription) {
-				return hasSubscription;
-			}
-			return (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0;
-		})
+		PROVIDERS.filter(p => (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0)
 	);
 
 	// Get models for current provider
@@ -116,14 +109,6 @@
 			hasAnyKeys = Object.values(apiKeys).some(key => key && key.length > 0);
 		} catch {
 			console.warn('Failed to load settings');
-		}
-
-		// Check subscription status
-		try {
-			const authState = await checkAuthStatus();
-			hasSubscription = authState.has_subscription;
-		} catch {
-			console.warn('Failed to check auth status');
 		}
 
 		isLoading = false;
@@ -289,16 +274,8 @@
 	const successCount = $derived(results.filter((r) => r.success).length);
 	const failureCount = $derived(results.filter((r) => !r.success).length);
 
-	// Check if current provider requires subscription
-	const currentProviderRequiresSubscription = $derived(
-		PROVIDERS.find(p => p.id === llmProvider)?.requiresSubscription ?? false
-	);
-
-	// Check if current provider is accessible (has API key OR is subscription-based with active subscription)
+	// Check if current provider has API key configured
 	const hasAccessForCurrentProvider = $derived(() => {
-		if (currentProviderRequiresSubscription) {
-			return hasSubscription;
-		}
 		return (apiKeys[llmProvider as keyof ApiKeys] ?? '').length > 0;
 	});
 </script>
@@ -351,7 +328,7 @@
 					<div>
 						<p class="font-bold text-black">No AI providers available</p>
 						<p class="text-sm text-black/80 mt-1">
-							Configure API keys in Settings or subscribe to use Tasker Fast.
+							Configure API keys in Settings to use AI models.
 						</p>
 						<a href="/settings" class="inline-block mt-3 btn-brutal bg-white text-black text-sm py-2">
 							GO TO SETTINGS
@@ -407,23 +384,13 @@
 						<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
 							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
 						</svg>
-						<span class="font-bold text-sm">
-							{#if currentProviderRequiresSubscription}
-								Subscription active
-							{:else}
-								API key configured
-							{/if}
-						</span>
+						<span class="font-bold text-sm">API key configured</span>
 					{:else}
 						<svg class="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
 							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
 						</svg>
 						<span class="font-bold text-sm">
-							{#if currentProviderRequiresSubscription}
-								Subscription required - <a href="/settings" class="underline">subscribe in Settings</a>
-							{:else}
-								No API key - <a href="/settings" class="underline">configure in Settings</a>
-							{/if}
+							No API key - <a href="/settings" class="underline">configure in Settings</a>
 						</span>
 					{/if}
 				</div>

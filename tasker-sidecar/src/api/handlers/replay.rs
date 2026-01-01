@@ -99,15 +99,10 @@ pub async fn start_replay(
     // Load API key from local config
     let api_key = crate::config::get_api_key(provider);
 
-    // Set up environment variable for the provider
+    // Set up environment variable for the provider (using thread-safe helper)
     if let Some(ref key) = api_key {
-        let env_var = match provider {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "google" | "gemini" => "GEMINI_API_KEY",
-            _ => "ANTHROPIC_API_KEY",
-        };
-        unsafe { std::env::set_var(env_var, key) };
+        let env_var = crate::config::get_env_var_for_provider(provider);
+        crate::config::set_api_key_env(env_var, key);
     }
 
     // Create browser manager
@@ -139,7 +134,6 @@ pub async fn start_replay(
         max_steps: 50,
         headless: request.headless,
         provider: Some(provider.to_string()),
-        auth_token: request.auth_token.clone(),
         min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
         capture_screenshots: true, // Enable screenshots by default for debugging
     };

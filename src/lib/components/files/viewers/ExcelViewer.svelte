@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import * as XLSX from 'xlsx';
+	import DOMPurify from 'dompurify';
 	import { decodeBase64ToBytes } from '$lib/services/filesService';
 
 	let { contentBase64 }: { contentBase64: string } = $props();
@@ -28,7 +29,8 @@
 		if (!workbook) return;
 		activeSheet = index;
 		const sheet = workbook.Sheets[sheets[index]];
-		tableHtml = XLSX.utils.sheet_to_html(sheet, { editable: false });
+		// SECURITY: Sanitize HTML to prevent XSS attacks
+		tableHtml = DOMPurify.sanitize(XLSX.utils.sheet_to_html(sheet, { editable: false }), { USE_PROFILES: { html: true } });
 	}
 </script>
 

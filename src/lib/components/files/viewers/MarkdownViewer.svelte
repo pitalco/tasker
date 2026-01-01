@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { marked } from 'marked';
+	import DOMPurify from 'dompurify';
 
 	let { content }: { content: string } = $props();
-	const html = $derived(marked(content));
+	// SECURITY: Sanitize HTML to prevent XSS attacks
+	const html = $derived(DOMPurify.sanitize(marked(content) as string, { USE_PROFILES: { html: true } }));
 </script>
 
 <div

@@ -43,8 +43,6 @@ pub struct StartReplayRequest {
     pub stop_when: Option<String>,
     /// Max steps override (None = use global default)
     pub max_steps: Option<i32>,
-    /// Auth token for Tasker Fast (subscription-based model)
-    pub auth_token: Option<String>,
 }
 
 fn default_iterations() -> i32 {
@@ -53,7 +51,4 @@ fn default_iterations() -> i32 {
 
 /// Request to stop a recording session and generate task description
 #[derive(Debug, Deserialize, Default)]
-pub struct StopRecordingRequest {
-    /// Auth token for Tasker Fast (subscription-based model)
-    pub auth_token: Option<String>,
-}
+pub struct StopRecordingRequest {}

@@ -1,18 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 
 export interface AuthState {
 	is_authenticated: boolean;
 	user_id: string | null;
 	email: string | null;
-	has_subscription: boolean;
-}
-
-export interface SubscriptionStatus {
-	hasSubscription: boolean;
-	status: string;
-	currentPeriodEnd: string | null;
-	cancelAtPeriodEnd: boolean;
 }
 
 // Check current auth status
@@ -51,34 +42,4 @@ export async function getAuthToken(): Promise<string | null> {
 // Clear auth (logout)
 export async function logout(): Promise<void> {
 	return invoke('clear_auth_token');
-}
-
-// Open Stripe checkout
-export async function openCheckout(): Promise<void> {
-	return invoke('open_checkout');
-}
-
-// Open customer portal
-export async function openCustomerPortal(): Promise<void> {
-	return invoke('open_customer_portal');
-}
-
-// Listen for deep link auth callbacks
-export function onDeepLink(
-	callback: (url: string) => void
-): Promise<() => void> {
-	return listen<string>('deep-link', (event) => {
-		callback(event.payload);
-	});
-}
-
-// Handle subscription success/cancel deep links
-export function parseSubscriptionResult(url: string): 'success' | 'cancel' | null {
-	if (url.startsWith('tasker://subscription/success')) {
-		return 'success';
-	}
-	if (url.startsWith('tasker://subscription/cancel')) {
-		return 'cancel';
-	}
-	return null;
 }

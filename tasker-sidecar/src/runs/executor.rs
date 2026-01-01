@@ -14,122 +14,7 @@ use tracing::instrument;
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
-use crate::llm::{RailwayClient, RailwayChatRequest, RailwayMessage, RailwayChatResponse};
 
-/// Unified tool call representation that works with both genai and Railway
-#[derive(Debug, Clone)]
-pub struct UnifiedToolCall {
-    pub call_id: String,
-    pub fn_name: String,
-    pub fn_arguments: Value,
-}
-
-/// Response from LLM that can be either genai or Railway format
-enum LLMResponse {
-    Genai(genai::chat::ChatResponse),
-    Railway(RailwayChatResponse),
-}
-
-impl LLMResponse {
-    /// Extract text content from the response (if any)
-    fn text_content(&self) -> Option<String> {
-        match self {
-            LLMResponse::Genai(res) => {
-                res.first_text().map(|s| s.to_string())
-            }
-            LLMResponse::Railway(res) => {
-                res.choices.first()
-                    .and_then(|c| c.message.content.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            }
-        }
-    }
-
-    /// Extract tool calls from either response type
-    fn into_tool_calls(self) -> Vec<UnifiedToolCall> {
-        match self {
-            LLMResponse::Genai(res) => {
-                res.into_tool_calls()
-                    .into_iter()
-                    .map(|tc| UnifiedToolCall {
-                        call_id: tc.call_id,
-                        fn_name: tc.fn_name,
-                        fn_arguments: tc.fn_arguments,
-                    })
-                    .collect()
-            }
-            LLMResponse::Railway(res) => {
-                extract_railway_tool_calls(&res)
-            }
-        }
-    }
-}
-
-/// Extract tool calls from Railway response
-fn extract_railway_tool_calls(response: &RailwayChatResponse) -> Vec<UnifiedToolCall> {
-    let mut tool_calls = Vec::new();
-
-    if let Some(choice) = response.choices.first() {
-        if let Some(calls) = &choice.message.tool_calls {
-            for call in calls {
-                // OpenAI format: { "id": "...", "type": "function", "function": { "name": "...", "arguments": "..." } }
-                if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
-                    if let Some(func) = call.get("function") {
-                        let name = func.get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-
-                        // Arguments can come as either:
-                        // 1. A JSON string that needs parsing (OpenAI format): "{ \"index\": 5 }"
-                        // 2. An already-parsed JSON object (some APIs): { "index": 5 }
-                        let arguments = match func.get("arguments") {
-                            Some(Value::String(s)) => {
-                                // Case 1: Arguments as JSON string - parse it
-                                serde_json::from_str(s).unwrap_or_else(|e| {
-                                    tracing::warn!("Failed to parse tool arguments JSON string: {} - input: {}", e, s);
-                                    Value::Object(serde_json::Map::new())
-                                })
-                            }
-                            Some(Value::Object(obj)) => {
-                                // Case 2: Arguments already as JSON object
-                                Value::Object(obj.clone())
-                            }
-                            Some(other) => {
-                                tracing::warn!("Unexpected tool arguments type: {:?}", other);
-                                Value::Object(serde_json::Map::new())
-                            }
-                            None => {
-                                Value::Object(serde_json::Map::new())
-                            }
-                        };
-
-                        tool_calls.push(UnifiedToolCall {
-                            call_id: id.to_string(),
-                            fn_name: name,
-                            fn_arguments: arguments,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    tool_calls
-}
-
-/// Convert UnifiedToolCall to genai ToolCall for chat history
-fn to_genai_tool_calls(tool_calls: &[UnifiedToolCall]) -> Vec<genai::chat::ToolCall> {
-    tool_calls
-        .iter()
-        .map(|tc| genai::chat::ToolCall {
-            call_id: tc.call_id.clone(),
-            fn_name: tc.fn_name.clone(),
-            fn_arguments: tc.fn_arguments.clone(),
-        })
-        .collect()
-}
 
 use super::logger::RunLogger;
 use super::models::{Run, RunStatus, RunStep};
@@ -146,8 +31,6 @@ pub struct ExecutorConfig {
     pub max_steps: usize,
     pub headless: bool,
     pub provider: Option<String>,
-    /// Auth token for Tasker Fast (passed from frontend)
-    pub auth_token: Option<String>,
     /// Minimum delay between LLM calls in milliseconds (rate limiting)
     pub min_llm_delay_ms: u64,
     /// Whether to capture screenshots after each step (disable for faster execution)
@@ -165,22 +48,9 @@ impl Default for ExecutorConfig {
             max_steps: MAX_STEPS,
             headless: false,
             provider: None,
-            auth_token: None,
             min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
             capture_screenshots: true,
         }
-    }
-}
-
-impl ExecutorConfig {
-    /// Check if this config uses the Tasker Fast provider (Railway proxy)
-    pub fn uses_tasker_fast(&self) -> bool {
-        if let Some(ref provider) = self.provider {
-            let p = provider.to_lowercase();
-            return p == "tasker-fast" || p == "taskerfast" || p == "tasker";
-        }
-        // Also check model name for backwards compatibility
-        self.model.to_lowercase().contains("tasker-fast")
     }
 }
 
@@ -294,24 +164,7 @@ Keep taking actions until the condition above is clearly met.
             memories: Arc::clone(&memories),
         };
 
-        // Check if using Tasker Fast (Railway proxy)
-        let uses_railway = self.config.uses_tasker_fast();
-        let railway_client = if uses_railway {
-            // Use auth token passed from frontend
-            let auth_token = self.config.auth_token.clone().ok_or_else(|| {
-                let error = "Not authenticated. Please sign in to use Tasker Fast.";
-                self.logger.error(run_id, error);
-                self.logger.status(run_id, RunStatus::Failed, Some(error.to_string()));
-                anyhow!(error)
-            })?;
-
-            self.logger.info(run_id, "Using Tasker Fast (Railway proxy)");
-            Some(RailwayClient::with_token(auth_token))
-        } else {
-            None
-        };
-
-        // Create genai client (for non-Railway providers)
+        // Create genai client
         // Pass API key directly through AuthResolver instead of using environment variables
         let client = if let Some(api_key) = &self.config.api_key {
             let api_key = api_key.clone();
@@ -408,30 +261,19 @@ Keep taking actions until the condition above is clearly met.
             const MAX_RETRIES: u32 = 5;
             const INITIAL_BACKOFF_MS: u64 = 2000; // Start with 2 seconds
 
-            let llm_response: LLMResponse = 'retry: {
+            let llm_response: genai::chat::ChatResponse = 'retry: {
                 let mut retry_count = 0u32;
                 let mut backoff_ms = INITIAL_BACKOFF_MS;
 
                 loop {
                     // 120s timeout for slow providers (e.g., Novita/Qwen VL)
-                    let result = if let Some(ref railway) = railway_client {
-                        tokio::time::timeout(
-                            Duration::from_secs(120),
-                            self.call_railway(railway, &chat_req, &tools)
-                        )
-                        .await
-                        .map_err(|_| anyhow!("LLM request timeout after 120s"))?
-                        .map(LLMResponse::Railway)
-                    } else {
-                        tokio::time::timeout(
-                            Duration::from_secs(120),
-                            client.exec_chat(&self.config.model, chat_req.clone(), None)
-                        )
-                        .await
-                        .map_err(|_| anyhow!("LLM request timeout after 120s"))?
-                        .map(LLMResponse::Genai)
-                        .map_err(|e| anyhow!("{}", e))
-                    };
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(120),
+                        client.exec_chat(&self.config.model, chat_req.clone(), None)
+                    )
+                    .await
+                    .map_err(|_| anyhow!("LLM request timeout after 120s"))?
+                    .map_err(|e| anyhow!("{}", e));
 
                     match result {
                         Ok(res) => break 'retry res,
@@ -469,7 +311,7 @@ Keep taking actions until the condition above is clearly met.
             };
 
             // Extract text content before consuming the response
-            let text_content = llm_response.text_content();
+            let text_content = llm_response.first_text().map(|s| s.to_string());
 
             // Check for tool calls
             let tool_calls = llm_response.into_tool_calls();
@@ -608,8 +450,15 @@ Keep taking actions until the condition above is clearly met.
             // The current page state is always included in the current message, so we don't need old ones
             // Memory system handles important data persistence
 
-            // 1. The assistant's tool calls
-            let genai_tool_calls = to_genai_tool_calls(&tool_calls);
+            // 1. The assistant's tool calls - convert back to genai format for history
+            let genai_tool_calls: Vec<genai::chat::ToolCall> = tool_calls
+                .iter()
+                .map(|tc| genai::chat::ToolCall {
+                    call_id: tc.call_id.clone(),
+                    fn_name: tc.fn_name.clone(),
+                    fn_arguments: tc.fn_arguments.clone(),
+                })
+                .collect();
             history.push(ChatMessage::from(genai_tool_calls));
 
             // 2. The tool responses
@@ -705,131 +554,6 @@ Keep taking actions until the condition above is clearly met.
         (text, req)
     }
 
-    /// Call Railway proxy with converted request format
-    async fn call_railway(
-        &self,
-        railway: &RailwayClient,
-        chat_req: &ChatRequest,
-        tools: &[Tool],
-    ) -> Result<RailwayChatResponse> {
-        // Convert genai messages to Railway/OpenAI format
-        let messages: Vec<RailwayMessage> = chat_req
-            .messages
-            .iter()
-            .map(|msg| {
-                let role = match msg.role {
-                    genai::chat::ChatRole::System => "system",
-                    genai::chat::ChatRole::User => "user",
-                    genai::chat::ChatRole::Assistant => "assistant",
-                    genai::chat::ChatRole::Tool => "tool",
-                };
-
-                // Check for ToolResponse in content (for tool role messages)
-                if let Some(tool_response) = msg.content.parts().iter().find_map(|p| p.as_tool_response()) {
-                    // Tool response message - must have tool_call_id and string content
-                    return RailwayMessage {
-                        role: "tool".to_string(),
-                        content: Value::String(tool_response.content.clone()),
-                        tool_calls: None,
-                        tool_call_id: Some(tool_response.call_id.clone()),
-                    };
-                }
-
-                // Check for ToolCalls in content (for assistant role messages)
-                let tool_calls: Vec<&genai::chat::ToolCall> = msg.content.parts()
-                    .iter()
-                    .filter_map(|p| p.as_tool_call())
-                    .collect();
-
-                let tool_calls_json = if !tool_calls.is_empty() {
-                    Some(tool_calls.iter().map(|tc| {
-                        json!({
-                            "id": tc.call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.fn_name,
-                                "arguments": tc.fn_arguments.to_string()
-                            }
-                        })
-                    }).collect::<Vec<Value>>())
-                } else {
-                    None
-                };
-
-                // Build content - exclude ToolCall/ToolResponse parts
-                let content_parts: Vec<Value> = msg.content.parts().iter().filter_map(|p| {
-                    if let Some(text) = p.as_text() {
-                        Some(json!({"type": "text", "text": text}))
-                    } else if let Some(binary) = p.as_binary() {
-                        let base64_str = match &binary.source {
-                            genai::chat::BinarySource::Base64(b64) => b64.to_string(),
-                            genai::chat::BinarySource::Url(url) => url.clone(),
-                        };
-                        Some(json!({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": format!("data:{};base64,{}", binary.content_type, base64_str)
-                            }
-                        }))
-                    } else {
-                        // Skip ToolCall and ToolResponse parts (handled separately)
-                        None
-                    }
-                }).collect();
-
-                // Determine final content format
-                let content = if content_parts.is_empty() {
-                    // Assistant message with only tool calls - content can be null
-                    Value::Null
-                } else if content_parts.len() == 1 {
-                    if let Some(text) = content_parts[0].get("text") {
-                        // Single text part - use string
-                        text.clone()
-                    } else {
-                        // Single non-text part - use array
-                        Value::Array(content_parts)
-                    }
-                } else {
-                    // Multiple parts - use array
-                    Value::Array(content_parts)
-                };
-
-                RailwayMessage {
-                    role: role.to_string(),
-                    content,
-                    tool_calls: tool_calls_json,
-                    tool_call_id: None,
-                }
-            })
-            .collect();
-
-        // Convert tools to OpenAI format
-        let tools_json: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.schema
-                    }
-                })
-            })
-            .collect();
-
-        let request = RailwayChatRequest {
-            messages,
-            max_tokens: Some(4096),
-            temperature: Some(0.7),
-            tools: if tools_json.is_empty() { None } else { Some(tools_json) },
-            tool_choice: if tools.is_empty() { None } else { Some(json!("auto")) },
-        };
-
-        // Make the call and return response directly
-        // Tool call extraction happens via extract_railway_tool_calls()
-        railway.chat(request).await
-    }
 }
 
 /// Check if a tool interacts with the browser (for screenshot capture)

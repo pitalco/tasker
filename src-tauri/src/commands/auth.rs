@@ -22,18 +22,6 @@ pub struct AuthState {
     pub is_authenticated: bool,
     pub user_id: Option<String>,
     pub email: Option<String>,
-    pub has_subscription: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubscriptionStatus {
-    #[serde(rename = "hasSubscription")]
-    pub has_subscription: bool,
-    pub status: String,
-    #[serde(rename = "currentPeriodEnd")]
-    pub current_period_end: Option<String>,
-    #[serde(rename = "cancelAtPeriodEnd")]
-    pub cancel_at_period_end: bool,
 }
 
 /// Store auth token and user info in persistent store
@@ -107,7 +95,6 @@ pub async fn check_auth_status(app: AppHandle) -> Result<AuthState, String> {
         is_authenticated: false,
         user_id: None,
         email: None,
-        has_subscription: false,
     };
 
     if token.is_none() {
@@ -137,14 +124,10 @@ pub async fn check_auth_status(app: AppHandle) -> Result<AuthState, String> {
                 .get(USER_EMAIL_KEY)
                 .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-            // Check subscription status
-            let has_subscription = check_subscription(&client, &backend_url, &token).await;
-
             Ok(AuthState {
                 is_authenticated: true,
                 user_id,
                 email,
-                has_subscription,
             })
         }
         _ => {
@@ -155,112 +138,6 @@ pub async fn check_auth_status(app: AppHandle) -> Result<AuthState, String> {
             let _ = store.save();
 
             Ok(not_authenticated)
-        }
-    }
-}
-
-/// Open Stripe checkout in default browser
-#[tauri::command]
-pub async fn open_checkout(app: AppHandle) -> Result<(), String> {
-    let token = get_auth_token(app).await?.ok_or("Not authenticated")?;
-
-    let client = reqwest::Client::new();
-    let backend_url = get_backend_url();
-    let response = client
-        .post(format!("{}/subscription/checkout", backend_url))
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to create checkout: {}", e))?;
-
-    if !response.status().is_success() {
-        let error = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to create checkout session: {}", error));
-    }
-
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let url = body
-        .get("url")
-        .and_then(|u| u.as_str())
-        .ok_or("No checkout URL in response")?;
-
-    // Open in default browser
-    open::that(url).map_err(|e| format!("Failed to open browser: {}", e))?;
-
-    Ok(())
-}
-
-/// Open Stripe customer portal in default browser
-#[tauri::command]
-pub async fn open_customer_portal(app: AppHandle) -> Result<(), String> {
-    let token = get_auth_token(app).await?.ok_or("Not authenticated")?;
-
-    let client = reqwest::Client::new();
-    let backend_url = get_backend_url();
-    let response = client
-        .post(format!("{}/subscription/portal", backend_url))
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to create portal session: {}", e))?;
-
-    if !response.status().is_success() {
-        let error = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to create portal session: {}", error));
-    }
-
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let url = body
-        .get("url")
-        .and_then(|u| u.as_str())
-        .ok_or("No portal URL in response")?;
-
-    // Open in default browser
-    open::that(url).map_err(|e| format!("Failed to open browser: {}", e))?;
-
-    Ok(())
-}
-
-// Helper function to check subscription status
-async fn check_subscription(client: &reqwest::Client, backend_url: &str, token: &str) -> bool {
-    let url = format!("{}/subscription/status", backend_url);
-    log::info!("Checking subscription at: {}", url);
-
-    match client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() {
-                match resp.json::<SubscriptionStatus>().await {
-                    Ok(s) => {
-                        log::info!("Subscription status: has_subscription={}", s.has_subscription);
-                        s.has_subscription
-                    }
-                    Err(e) => {
-                        log::error!("Failed to parse subscription response: {}", e);
-                        false
-                    }
-                }
-            } else {
-                log::error!("Subscription check failed with status: {}", status);
-                false
-            }
-        }
-        Err(e) => {
-            log::error!("Subscription check request failed: {}", e);
-            false
         }
     }
 }
@@ -331,14 +208,10 @@ pub async fn sign_up_email(
     )
     .await?;
 
-    // Check subscription status
-    let has_subscription = check_subscription(&client, &backend_url, session_token).await;
-
     Ok(AuthState {
         is_authenticated: true,
         user_id: Some(user_id.to_string()),
         email: Some(user_email.to_string()),
-        has_subscription,
     })
 }
 
@@ -400,12 +273,9 @@ pub async fn sign_in_email(
     )
     .await?;
 
-    let has_subscription = check_subscription(&client, &backend_url, session_token).await;
-
     Ok(AuthState {
         is_authenticated: true,
         user_id: Some(user_id.to_string()),
         email: Some(user_email.to_string()),
-        has_subscription,
     })
 }
