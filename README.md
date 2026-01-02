@@ -6,18 +6,22 @@ Record workflows by example, then let an AI agent execute them intelligently. Un
 
 ## How It Works
 
-1. **Create Workflow** - Click "Create Workflow" and choose to record or describe your task
-2. **Record** - Perform the task in Chrome while Tasker captures your actions
-3. **Run** - AI agent executes the task, using your recording as guidance
+1. **Create Workflow** - Record a browser task OR describe it in plain English
+2. **Recording Becomes Hints** - Your actions are captured as guidance, not as a macro to replay
+3. **AI Executes Intelligently** - The AI sees your hints + the current page and decides how to proceed
 
-### AI-First Execution
+### AI-First, Not Macro Playback
 
-This is not a macro player. When you run a workflow:
+Tasker is fundamentally different from traditional automation:
 
-- Recorded steps serve as **hints**, not a strict script
-- The AI agent sees the actual page and decides what to do
-- It handles popups, layout changes, CAPTCHAs, and dynamic content
-- If something doesn't match the recording, it adapts
+| Traditional RPA | Tasker |
+|----------------|--------|
+| Replays exact coordinates/selectors | AI understands the *intent* behind actions |
+| Breaks when UI changes | Adapts to layout changes, popups, dynamic content |
+| Blind execution | Sees the page via screenshots + DOM analysis |
+| Fixed script | Can deviate from recording when needed |
+
+Your recorded workflow becomes **semantic context** for the AI. It knows "the user clicked a Submit button" rather than "click at (234, 567)".
 
 ## Features
 
@@ -30,14 +34,15 @@ This is not a macro player. When you run a workflow:
 - **Taskfile Export** - Share workflows as portable YAML files
 - **Headless Mode** - Run in background without visible browser
 - **Run History** - Review step-by-step execution logs with screenshots
+- **Agent Memory** - AI can save notes and recall information across steps
 
 ## Supported LLM Providers
 
 | Provider | Models |
 |----------|--------|
-| Anthropic | Claude Sonnet 4, Claude Haiku 4.5 |
-| OpenAI | GPT-4o, GPT-4o-mini |
-| Google | Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Pro |
+| Anthropic | Claude Opus 4.5, Claude Sonnet 4.5, Claude Haiku 4.5 |
+| OpenAI | GPT-4o, GPT-4o Mini |
+| Google | Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Flash, Gemini 3 Pro |
 
 Configure API keys in Settings. Only models with configured keys are available.
 
@@ -64,7 +69,7 @@ execution:
   mode: ai_assisted
   llm:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-5
 
 limits:
   timeout_seconds: 300
@@ -157,9 +162,10 @@ Elements can be targeted by:
 tasker/
 ├── src/                        # SvelteKit frontend
 │   ├── routes/                 # Pages
-│   │   ├── (home)              # Workflow list
-│   │   ├── workflows/[id]      # Edit workflow
-│   │   ├── replay/[id]         # Run workflow
+│   │   ├── +page.svelte        # Home - workflow list
+│   │   ├── record/             # Recording interface
+│   │   ├── workflows/          # Create & edit workflows
+│   │   ├── replay/[id]/        # Run workflow
 │   │   ├── runs/               # Run history
 │   │   ├── files/              # File browser
 │   │   └── settings/           # Configuration
@@ -267,10 +273,6 @@ When executing a workflow:
 | Iterations | Run multiple times (1-100) |
 | Headless | Run without visible browser |
 | Custom Instructions | Additional guidance for AI |
-
-## Contributing
-
-Contributions welcome! Please read our contributing guidelines before submitting PRs.
 
 ## License
 
