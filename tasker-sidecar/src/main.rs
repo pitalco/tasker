@@ -1,3 +1,6 @@
+// Prevents console window from appearing on Windows release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
