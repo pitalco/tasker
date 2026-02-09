@@ -75,6 +75,14 @@ pub fn run() {
             commands::replay::start_replay,
             commands::replay::stop_replay,
             commands::replay::get_replay_status,
+            // Runs commands
+            commands::runs::list_runs,
+            commands::runs::get_run,
+            commands::runs::start_run,
+            commands::runs::cancel_run,
+            commands::runs::delete_run,
+            commands::runs::get_run_steps,
+            commands::runs::get_run_logs,
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,

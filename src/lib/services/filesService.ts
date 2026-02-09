@@ -1,67 +1,28 @@
 import { invoke } from '@tauri-apps/api/core';
-import { getSidecarUrls } from './sidecarService';
 import type { TaskerFile, FileContentResponse, FileListResponse, FileCategory } from '$lib/types/file';
-
-// Get the base HTTP URL for the sidecar
-async function getSidecarHttpUrl(): Promise<string> {
-	const [httpUrl] = await getSidecarUrls();
-	return httpUrl;
-}
 
 // List all files with pagination
 export async function listFiles(limit?: number, offset?: number): Promise<FileListResponse> {
-	const baseUrl = await getSidecarHttpUrl();
-	const params = new URLSearchParams();
-
-	if (limit) params.set('limit', limit.toString());
-	if (offset) params.set('offset', offset.toString());
-
-	const url = `${baseUrl}/files${params.toString() ? '?' + params.toString() : ''}`;
-	const response = await fetch(url);
-
-	if (!response.ok) {
-		throw new Error(`Failed to list files: ${response.statusText}`);
-	}
-
-	return response.json();
+	return invoke<FileListResponse>('get_all_files', {
+		limit: limit ?? null,
+		offset: offset ?? null
+	});
 }
 
 // List files for a specific run
 export async function listFilesForRun(runId: string): Promise<FileListResponse> {
-	const baseUrl = await getSidecarHttpUrl();
-	const response = await fetch(`${baseUrl}/runs/${runId}/files`);
-
-	if (!response.ok) {
-		throw new Error(`Failed to list files: ${response.statusText}`);
-	}
-
-	return response.json();
+	const files = await invoke<TaskerFile[]>('get_files_for_run', { runId });
+	return { files, total: files.length };
 }
 
 // Get file content by ID (returns base64 encoded content)
 export async function getFileContent(fileId: string): Promise<FileContentResponse> {
-	const baseUrl = await getSidecarHttpUrl();
-	const response = await fetch(`${baseUrl}/files/${fileId}`);
-
-	if (!response.ok) {
-		throw new Error(`Failed to get file: ${response.statusText}`);
-	}
-
-	return response.json();
+	return invoke<FileContentResponse>('get_file_content', { fileId });
 }
 
 // Delete a file
 export async function deleteFile(fileId: string): Promise<boolean> {
-	const baseUrl = await getSidecarHttpUrl();
-	const response = await fetch(`${baseUrl}/files/${fileId}`, {
-		method: 'DELETE'
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to delete file: ${response.statusText}`);
-	}
-
-	return true;
+	return invoke<boolean>('delete_file', { fileId });
 }
 
 // Download file using native save dialog (via Tauri command)
