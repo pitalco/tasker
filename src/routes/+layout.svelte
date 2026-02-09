@@ -179,7 +179,7 @@
 		<!-- Footer -->
 		<div class="p-4 border-t-4 border-black">
 			<div class="px-4 py-3 bg-white border-3 border-black text-xs font-bold text-center" style="box-shadow: 2px 2px 0 0 #000;">
-				v0.1.0 — BETA
+				v0.1.1 — BETA
 			</div>
 		</div>
 	</aside>

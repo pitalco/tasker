@@ -5,6 +5,9 @@ use std::thread;
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 static SIDECAR_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static SIDECAR_PORT: u16 = 8765;
 
@@ -33,6 +36,11 @@ impl SidecarManager {
         // Spawn the sidecar process
         // Set RUST_LOG to filter out noisy chromiumoxide errors
         let mut cmd = Command::new(&sidecar_path);
+
+        // Prevent a console window from appearing on Windows
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
         cmd.env(
             "RUST_LOG",
             "info,chromiumoxide::conn=warn,chromiumoxide::handler=warn",
