@@ -13,7 +13,7 @@ use tracing::instrument;
 
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
-use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
+use crate::tools::{register_all_tools, RunSpawner, TerminalSession, ToolContext, ToolRegistry, ToolResult};
 
 
 use super::logger::RunLogger;
@@ -35,6 +35,14 @@ pub struct ExecutorConfig {
     pub min_llm_delay_ms: u64,
     /// Whether to capture screenshots after each step (disable for faster execution)
     pub capture_screenshots: bool,
+    /// Allowed directories for real filesystem access
+    pub allowed_directories: Vec<std::path::PathBuf>,
+    /// Spawner for child agent runs (orchestration)
+    pub run_spawner: Option<Arc<dyn RunSpawner>>,
+    /// Current agent nesting depth (0 = top-level)
+    pub agent_depth: u32,
+    /// Command execution timeout in seconds (default 30)
+    pub command_timeout_secs: u64,
 }
 
 /// Default minimum delay between LLM calls (2 seconds for rate limit safety)
@@ -50,6 +58,10 @@ impl Default for ExecutorConfig {
             provider: None,
             min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
             capture_screenshots: true,
+            allowed_directories: Vec::new(),
+            run_spawner: None,
+            agent_depth: 0,
+            command_timeout_secs: 30,
         }
     }
 }
@@ -154,6 +166,9 @@ Keep taking actions until the condition above is clearly met.
         // Create in-memory storage for memories/notes
         let memories = Arc::new(RwLock::new(Vec::new()));
 
+        // Create terminal session for this run
+        let terminal_session = Arc::new(tokio::sync::Mutex::new(TerminalSession::new()));
+
         // Create tool context with file repository access
         let ctx = ToolContext {
             run_id: run_id.clone(),
@@ -162,6 +177,10 @@ Keep taking actions until the condition above is clearly met.
             selector_map: Arc::clone(&selector_map),
             file_repository: Some(Arc::new(self.logger.repository().clone())),
             memories: Arc::clone(&memories),
+            terminal_session: Arc::clone(&terminal_session),
+            allowed_directories: self.config.allowed_directories.clone(),
+            run_spawner: self.config.run_spawner.clone(),
+            agent_depth: self.config.agent_depth,
         };
 
         // Create genai client
@@ -477,6 +496,16 @@ Keep taking actions until the condition above is clearly met.
             }
         }
 
+        // Clean up terminal session (kill any background processes)
+        {
+            let mut session = terminal_session.lock().await;
+            if let Some(ref mut child) = session.background_child {
+                let _ = child.kill().await;
+            }
+            session.background_child = None;
+            session.background_running = false;
+        }
+
         Ok(())
     }
 
@@ -538,9 +567,10 @@ Keep taking actions until the condition above is clearly met.
         // Get current memories snapshot
         let memories_snapshot = memories.read().await;
 
-        // Build text content with memories and step info
+        // Build text content with memories, allowed directories, and step info
         let text = UserMessageBuilder::new()
             .with_memories(&memories_snapshot)
+            .with_allowed_directories(&self.config.allowed_directories)
             .with_browser_state(&url, &title, &dom_result)
             .with_step_info(step_number, max_steps)
             .build();

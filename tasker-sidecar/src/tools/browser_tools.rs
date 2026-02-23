@@ -1470,6 +1470,33 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(RecallMemoriesTool));
     registry.register(Arc::new(DeleteMemoryTool));
 
+    // Terminal
+    use super::terminal_tools::{ExecuteCommandTool, ExecuteCommandBackgroundTool, ReadTerminalOutputTool};
+    registry.register(Arc::new(ExecuteCommandTool));
+    registry.register(Arc::new(ExecuteCommandBackgroundTool));
+    registry.register(Arc::new(ReadTerminalOutputTool));
+
+    // Filesystem (real disk access, sandboxed)
+    use super::filesystem_tools::{
+        FsReadFileTool, FsWriteFileTool, FsListDirectoryTool,
+        FsDeleteFileTool, FsMoveFileTool, FsFileInfoTool,
+    };
+    registry.register(Arc::new(FsReadFileTool));
+    registry.register(Arc::new(FsWriteFileTool));
+    registry.register(Arc::new(FsListDirectoryTool));
+    registry.register(Arc::new(FsDeleteFileTool));
+    registry.register(Arc::new(FsMoveFileTool));
+    registry.register(Arc::new(FsFileInfoTool));
+
+    // Agent Orchestration
+    use super::orchestration_tools::{
+        SpawnAgentTool, AwaitAgentTool, GetAgentStatusTool, ListAgentsTool,
+    };
+    registry.register(Arc::new(SpawnAgentTool));
+    registry.register(Arc::new(AwaitAgentTool));
+    registry.register(Arc::new(GetAgentStatusTool));
+    registry.register(Arc::new(ListAgentsTool));
+
     // Completion
     registry.register(Arc::new(DoneTool));
 }

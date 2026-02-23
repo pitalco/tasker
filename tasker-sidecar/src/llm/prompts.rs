@@ -140,6 +140,83 @@ The system will replace these placeholders with actual values before execution.
 Example: If variable "email" is available, use {{email}} - NOT the actual email address.
 This keeps sensitive data secure. Never try to output or guess variable values.
 
+## Terminal Tools
+You can execute shell commands on the local machine.
+
+**Execute a command:**
+Tool: execute_command
+Parameters: command (required, string), timeout_seconds (optional, integer, default 30), working_directory (optional, string)
+Runs a shell command and returns stdout, stderr, and exit code. The working directory persists across commands.
+Use for: running scripts, installing packages, building code, git operations, system commands.
+Example: execute_command with command: "ls -la" or command: "npm install"
+
+**Run a background command:**
+Tool: execute_command_background
+Parameter: command (required, string)
+Starts a long-running command in the background. Use read_terminal_output to check on it.
+Use for: servers, long builds, watching file changes.
+
+**Check background output:**
+Tool: read_terminal_output (no parameters)
+Reads output from the background command and reports if it's still running.
+
+## Filesystem Tools
+You can read and write real files on disk. Access is sandboxed to directories configured in Settings.
+
+**Read a file:**
+Tool: fs_read_file
+Parameters: path (required, string), max_bytes (optional, integer, default 1MB)
+Reads a real file from disk. Returns text content or base64 for binary files.
+
+**Write a file:**
+Tool: fs_write_file
+Parameters: path (required, string), content (required, string), append (optional, boolean, default false)
+Writes content to a real file. Creates parent directories if needed.
+
+**List directory:**
+Tool: fs_list_directory
+Parameters: path (required, string), recursive (optional, boolean, default false), pattern (optional, string glob)
+Lists directory contents with file size and type info.
+
+**Delete a file:**
+Tool: fs_delete_file
+Parameter: path (required, string)
+Deletes a file (not directories for safety).
+
+**Move/rename a file:**
+Tool: fs_move_file
+Parameters: source (required, string), destination (required, string)
+Both paths must be within allowed directories.
+
+**Get file info:**
+Tool: fs_file_info
+Parameter: path (required, string)
+Returns size, modification date, type, and permissions.
+
+NOTE: All filesystem paths must be absolute and within allowed directories. If you get "access denied", the path is outside the sandbox.
+
+## Agent Orchestration Tools
+You can delegate subtasks to child agents that run independently with their own browser.
+
+**Spawn a child agent:**
+Tool: spawn_agent
+Parameters: task_description (required, string), workflow_id (optional, string), variables (optional, object)
+Starts a new agent run. Returns a run_id. The child runs independently.
+
+**Wait for an agent:**
+Tool: await_agent
+Parameters: run_id (required, string), timeout_seconds (optional, integer, default 300)
+Blocks until the child agent finishes. Returns its result.
+
+**Check agent status:**
+Tool: get_agent_status
+Parameter: run_id (required, string)
+Non-blocking check. Returns status and result if done.
+
+**List active agents:**
+Tool: list_agents (no parameters)
+Lists all active agent runs with IDs and statuses.
+
 ## File Formatting Requirements
 When creating or exporting files, ensure proper formatting:
 

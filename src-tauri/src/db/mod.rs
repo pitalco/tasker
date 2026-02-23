@@ -139,5 +139,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
 
+    // Migration: Add allowed_directories_json column to app_settings if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE app_settings ADD COLUMN allowed_directories_json TEXT DEFAULT '[]'")
+        .execute(pool)
+        .await;
+
     Ok(())
 }

@@ -150,11 +150,17 @@ fn default_max_steps() -> i32 {
     50
 }
 
+fn default_allowed_directories() -> Vec<String> {
+    Vec::new()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub llm_config: LLMConfig,
     #[serde(default = "default_max_steps")]
     pub default_max_steps: i32,
+    #[serde(default = "default_allowed_directories")]
+    pub allowed_directories: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -162,6 +168,7 @@ impl Default for AppSettings {
         AppSettings {
             llm_config: LLMConfig::default(),
             default_max_steps: 50,
+            allowed_directories: Vec::new(),
         }
     }
 }
@@ -172,4 +179,5 @@ pub struct UpdateSettingsRequest {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
     pub default_max_steps: Option<i32>,
+    pub allowed_directories: Option<Vec<String>>,
 }

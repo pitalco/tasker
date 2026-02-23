@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::browser::DOMExtractionResult;
 use crate::models::RecordedAction;
 use crate::tools::Memory;
@@ -12,6 +14,7 @@ pub struct UserMessageBuilder {
     elements_repr: String,
     step_number: Option<usize>,
     max_steps: Option<usize>,
+    allowed_directories: Vec<PathBuf>,
 }
 
 impl UserMessageBuilder {
@@ -25,6 +28,7 @@ impl UserMessageBuilder {
             elements_repr: String::new(),
             step_number: None,
             max_steps: None,
+            allowed_directories: Vec::new(),
         }
     }
 
@@ -50,6 +54,12 @@ impl UserMessageBuilder {
     /// Set the memories for this run
     pub fn with_memories(mut self, memories: &[Memory]) -> Self {
         self.memories = memories.to_vec();
+        self
+    }
+
+    /// Set the allowed directories for filesystem access
+    pub fn with_allowed_directories(mut self, dirs: &[PathBuf]) -> Self {
+        self.allowed_directories = dirs.to_vec();
         self
     }
 
@@ -85,6 +95,11 @@ impl UserMessageBuilder {
         // Add memories section if present
         if !self.memories.is_empty() {
             parts.push(format_memories(&self.memories));
+        }
+
+        // Add allowed directories context if configured
+        if !self.allowed_directories.is_empty() {
+            parts.push(format_allowed_directories(&self.allowed_directories));
         }
 
         // Add browser state (always present)
@@ -141,6 +156,18 @@ fn format_memories(memories: &[Memory]) -> String {
     }
 
     lines.push("</memories>".to_string());
+    lines.join("\n")
+}
+
+/// Format allowed directories as context for the LLM
+fn format_allowed_directories(dirs: &[PathBuf]) -> String {
+    let mut lines = Vec::new();
+    lines.push("<allowed_directories>".to_string());
+    lines.push("Filesystem tools (fs_read_file, fs_write_file, etc.) can access these directories:".to_string());
+    for dir in dirs {
+        lines.push(format!("- {}", dir.display()));
+    }
+    lines.push("</allowed_directories>".to_string());
     lines.join("\n")
 }
 

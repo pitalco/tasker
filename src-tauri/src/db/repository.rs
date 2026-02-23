@@ -219,7 +219,7 @@ pub async fn get_settings() -> Result<AppSettings, sqlx::Error> {
 
     let row = sqlx::query(
         r#"
-        SELECT llm_config_json, default_max_steps
+        SELECT llm_config_json, default_max_steps, allowed_directories_json
         FROM app_settings
         WHERE id = 1
         "#,
@@ -232,10 +232,15 @@ pub async fn get_settings() -> Result<AppSettings, sqlx::Error> {
             let llm_config_json: String = r.get("llm_config_json");
             let llm_config: LLMConfig = serde_json::from_str(&llm_config_json).unwrap_or_default();
             let default_max_steps: Option<i32> = r.get("default_max_steps");
+            let allowed_dirs_json: Option<String> = r.get("allowed_directories_json");
+            let allowed_directories: Vec<String> = allowed_dirs_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
 
             Ok(AppSettings {
                 llm_config,
                 default_max_steps: default_max_steps.unwrap_or(50),
+                allowed_directories,
             })
         }
         None => Ok(AppSettings::default()),
@@ -271,23 +276,30 @@ pub async fn update_settings(req: UpdateSettingsRequest) -> Result<AppSettings, 
     if let Some(default_max_steps) = req.default_max_steps {
         settings.default_max_steps = default_max_steps;
     }
+    if let Some(allowed_directories) = req.allowed_directories {
+        settings.allowed_directories = allowed_directories;
+    }
 
     let llm_config_json = serde_json::to_string(&settings.llm_config)
         .expect("Failed to serialize LLM config - this should never happen with valid LLMConfig types");
+    let allowed_dirs_json = serde_json::to_string(&settings.allowed_directories)
+        .expect("Failed to serialize allowed directories");
 
     // Upsert settings (SQLite UPSERT)
     sqlx::query(
         r#"
-        INSERT INTO app_settings (id, llm_config_json, default_max_steps, updated_at)
-        VALUES (1, ?, ?, ?)
+        INSERT INTO app_settings (id, llm_config_json, default_max_steps, allowed_directories_json, updated_at)
+        VALUES (1, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             llm_config_json = excluded.llm_config_json,
             default_max_steps = excluded.default_max_steps,
+            allowed_directories_json = excluded.allowed_directories_json,
             updated_at = excluded.updated_at
         "#,
     )
     .bind(&llm_config_json)
     .bind(&settings.default_max_steps)
+    .bind(&allowed_dirs_json)
     .bind(&now)
     .execute(pool)
     .await?;

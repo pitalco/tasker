@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::browser::BrowserManager;
 use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse, StepResult, Viewport};
-use crate::runs::{ExecutorConfig, Run, RunEvent, RunExecutor, RunLogger, RunStatus};
+use crate::runs::{AppStateRunSpawner, ExecutorConfig, Run, RunEvent, RunExecutor, RunLogger, RunStatus};
 
 use super::super::state::{AppState, WsEvent};
 
@@ -128,6 +128,18 @@ pub async fn start_replay(
     // Create logger and executor
     let logger = RunLogger::new(repo.clone());
 
+    // Load allowed directories from config
+    let allowed_directories = crate::config::get_allowed_directories();
+
+    // Create run spawner for agent orchestration
+    let run_spawner = Arc::new(AppStateRunSpawner::new(
+        Arc::clone(&state),
+        model.to_string(),
+        api_key.clone(),
+        Some(provider.to_string()),
+        allowed_directories.clone(),
+    ));
+
     let config = ExecutorConfig {
         model: model.to_string(),
         api_key,
@@ -136,6 +148,10 @@ pub async fn start_replay(
         provider: Some(provider.to_string()),
         min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
         capture_screenshots: true, // Enable screenshots by default for debugging
+        allowed_directories,
+        run_spawner: Some(run_spawner),
+        agent_depth: 0,
+        command_timeout_secs: 30,
     };
 
     let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);

@@ -198,3 +198,31 @@ pub fn get_default_model() -> Option<String> {
 
     config.default_model
 }
+
+/// Get the allowed directories for filesystem access from settings
+pub fn get_allowed_directories() -> Vec<std::path::PathBuf> {
+    let db_path = match get_db_path() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    let conn = match Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to open settings database: {}", e);
+            return Vec::new();
+        }
+    };
+
+    let json_str: String = match conn.query_row(
+        "SELECT COALESCE(allowed_directories_json, '[]') FROM app_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let dirs: Vec<String> = serde_json::from_str(&json_str).unwrap_or_default();
+    dirs.into_iter().map(std::path::PathBuf::from).collect()
+}

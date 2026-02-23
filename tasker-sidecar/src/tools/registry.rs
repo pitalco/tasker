@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -95,6 +96,75 @@ impl ToolResult {
     }
 }
 
+/// Terminal session state shared across commands within a run.
+/// Uses per-command execution with shared working directory and environment variables.
+pub struct TerminalSession {
+    /// Current working directory (persists across commands within a run)
+    pub working_directory: PathBuf,
+    /// Environment variables for commands
+    pub env_vars: HashMap<String, String>,
+    /// Background command handle (if any)
+    pub background_child: Option<tokio::process::Child>,
+    /// Accumulated output from background command
+    pub background_output: String,
+    /// Whether a background command is still running
+    pub background_running: bool,
+}
+
+impl TerminalSession {
+    pub fn new() -> Self {
+        Self {
+            working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            env_vars: HashMap::new(),
+            background_child: None,
+            background_output: String::new(),
+            background_running: false,
+        }
+    }
+}
+
+impl Default for TerminalSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Trait for spawning and managing child agent runs (orchestration).
+#[async_trait]
+pub trait RunSpawner: Send + Sync {
+    /// Spawn a new child agent run. Returns the run_id.
+    async fn spawn_run(
+        &self,
+        task_description: String,
+        workflow_id: Option<String>,
+        variables: Option<HashMap<String, String>>,
+        parent_depth: u32,
+    ) -> Result<String>;
+
+    /// Get the status of a run (non-blocking).
+    async fn get_run_status(&self, run_id: &str) -> Result<RunSpawnerStatus>;
+
+    /// List all active runs.
+    async fn list_active_runs(&self) -> Result<Vec<RunSpawnerInfo>>;
+}
+
+/// Status info returned by RunSpawner
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunSpawnerStatus {
+    pub run_id: String,
+    pub status: String,
+    pub result: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Info about an active run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunSpawnerInfo {
+    pub run_id: String,
+    pub task_description: Option<String>,
+    pub status: String,
+}
+
 /// Context passed to tools during execution
 pub struct ToolContext {
     pub run_id: String,
@@ -107,6 +177,14 @@ pub struct ToolContext {
     pub file_repository: Option<Arc<RunRepository>>,
     /// In-memory storage for notes/memories during this run
     pub memories: Arc<RwLock<Vec<Memory>>>,
+    /// Terminal session for command execution (lazy-init per run)
+    pub terminal_session: Arc<tokio::sync::Mutex<TerminalSession>>,
+    /// Allowed directories for real filesystem access (empty = no access)
+    pub allowed_directories: Vec<PathBuf>,
+    /// Spawner for creating child agent runs (orchestration)
+    pub run_spawner: Option<Arc<dyn RunSpawner>>,
+    /// Current agent nesting depth (0 = top-level)
+    pub agent_depth: u32,
 }
 
 /// Trait for implementing tools

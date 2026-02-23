@@ -28,6 +28,10 @@
 	// Default max steps
 	let defaultMaxSteps = $state(50);
 
+	// Allowed directories for filesystem access
+	let allowedDirectories = $state<string[]>([]);
+	let newDirectory = $state('');
+
 	// All providers require API keys
 	const apiKeyProviders = $derived(PROVIDERS);
 
@@ -42,6 +46,7 @@
 			defaultProvider = settings.llm_config.default_provider;
 			defaultModel = settings.llm_config.default_model;
 			defaultMaxSteps = settings.default_max_steps || 50;
+			allowedDirectories = settings.allowed_directories || [];
 		} catch (e) {
 			console.warn('Failed to load settings, using defaults');
 		} finally {
@@ -65,6 +70,18 @@
 		return (apiKeys[providerId as keyof ApiKeys] ?? '').length > 0;
 	}
 
+	function addDirectory() {
+		const dir = newDirectory.trim();
+		if (dir && !allowedDirectories.includes(dir)) {
+			allowedDirectories = [...allowedDirectories, dir];
+			newDirectory = '';
+		}
+	}
+
+	function removeDirectory(index: number) {
+		allowedDirectories = allowedDirectories.filter((_, i) => i !== index);
+	}
+
 	async function saveSettings() {
 		isSaving = true;
 		error = null;
@@ -81,7 +98,8 @@
 				api_keys: keysToSave,
 				default_provider: defaultProvider,
 				default_model: defaultModel,
-				default_max_steps: defaultMaxSteps
+				default_max_steps: defaultMaxSteps,
+				allowed_directories: allowedDirectories
 			});
 			successMessage = 'Settings saved successfully!';
 			setTimeout(() => (successMessage = null), 3000);
@@ -249,6 +267,67 @@
 					<p class="text-xs text-black/50 mt-1">
 						Maximum steps before a run stops (default: 50). Can be overridden per-workflow.
 					</p>
+				</div>
+			</div>
+		</div>
+
+		<!-- Filesystem Access Section -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-lime h-2 border-b-3 border-black"></div>
+			<div class="p-6 space-y-4">
+				<div>
+					<h2 class="text-xl font-bold text-black">FILESYSTEM ACCESS</h2>
+					<p class="text-sm text-black/60 font-medium mt-1">
+						Directories agents are allowed to read/write. All filesystem operations are sandboxed to these
+						paths.
+					</p>
+				</div>
+
+				{#if allowedDirectories.length > 0}
+					<div class="space-y-2">
+						{#each allowedDirectories as dir, i}
+							<div
+								class="border-3 border-black p-3 bg-white flex items-center justify-between"
+								style="box-shadow: 2px 2px 0 0 #000;"
+							>
+								<span class="font-mono text-sm text-black truncate flex-1 mr-3">{dir}</span>
+								<button
+									onclick={() => removeDirectory(i)}
+									class="text-black font-bold text-sm border-2 border-black px-2 py-1 hover:bg-brutal-magenta"
+								>
+									REMOVE
+								</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div
+						class="bg-brutal-yellow/30 border-3 border-black p-4"
+						style="box-shadow: 3px 3px 0 0 #000;"
+					>
+						<p class="font-bold text-black text-sm">No directories configured</p>
+						<p class="text-xs text-black/60 mt-1">
+							Agents cannot access the filesystem until you add at least one allowed directory.
+						</p>
+					</div>
+				{/if}
+
+				<div class="flex gap-2">
+					<input
+						type="text"
+						bind:value={newDirectory}
+						placeholder="Enter absolute path (e.g., C:\Users\me\projects)"
+						class="input-brutal text-sm flex-1"
+						onkeydown={(e) => {
+							if (e.key === 'Enter') addDirectory();
+						}}
+					/>
+					<button
+						onclick={addDirectory}
+						class="btn-brutal bg-brutal-cyan text-black text-sm whitespace-nowrap"
+					>
+						ADD
+					</button>
 				</div>
 			</div>
 		</div>
