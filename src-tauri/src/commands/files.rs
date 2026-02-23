@@ -103,12 +103,12 @@ pub async fn get_files_for_run(run_id: String) -> Result<Vec<FileMetadata>, Stri
         return Err(format!("Failed to fetch files: {}", error_text));
     }
 
-    let result: Vec<FileMetadata> = response
+    let result: FileListResponse = response
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    Ok(result)
+    Ok(result.files)
 }
 
 /// Get file content by ID (returns base64 encoded content)
