@@ -25,6 +25,25 @@
 	const runsState = getRunsState();
 	const ws = getWebSocket();
 
+	// Check if a tool is a terminal, filesystem, or orchestration tool (for output display)
+	function isOutputTool(toolName: string): boolean {
+		return [
+			'execute_command', 'execute_command_background', 'read_terminal_output',
+			'fs_read_file', 'fs_write_file', 'fs_list_directory',
+			'fs_delete_file', 'fs_move_file', 'fs_file_info',
+			'spawn_agent', 'await_agent', 'get_agent_status', 'list_agents'
+		].includes(toolName);
+	}
+
+	// Get the result text from a step for display beneath it
+	function getStepOutput(step: RunStep): string | null {
+		if (!step.result) return null;
+		const result = typeof step.result === 'string' ? step.result : JSON.stringify(step.result, null, 2);
+		if (!result || result === 'null') return null;
+		// Truncate very long output for display
+		return result.length > 2000 ? result.slice(0, 1997) + '...' : result;
+	}
+
 	// Format step into human-readable display
 	function formatStepDisplay(step: RunStep): string {
 		const params = step.params || {};
@@ -66,6 +85,49 @@
 				const keyPart = params.key ? `key: "${params.key}", ` : '';
 				return `Save Memory(${keyPart}"${displayContent}")`;
 			}
+			// Terminal tools
+			case 'execute_command': {
+				const cmd = String(params.command || '');
+				const displayCmd = cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd;
+				return `Execute Command(${displayCmd})`;
+			}
+			case 'execute_command_background': {
+				const bgCmd = String(params.command || '');
+				const displayBgCmd = bgCmd.length > 60 ? bgCmd.slice(0, 57) + '...' : bgCmd;
+				return `Background Command(${displayBgCmd})`;
+			}
+			case 'read_terminal_output':
+				return 'Read Terminal Output';
+			// Filesystem tools
+			case 'fs_read_file':
+				return `Read File(${params.path || ''})`;
+			case 'fs_write_file': {
+				const append = params.append ? ', append' : '';
+				return `Write File(${params.path || ''}${append})`;
+			}
+			case 'fs_list_directory': {
+				const recursive = params.recursive ? ', recursive' : '';
+				const pattern = params.pattern ? `, pattern: "${params.pattern}"` : '';
+				return `List Directory(${params.path || ''}${recursive}${pattern})`;
+			}
+			case 'fs_delete_file':
+				return `Delete File(${params.path || ''})`;
+			case 'fs_move_file':
+				return `Move File(${params.source || ''} → ${params.destination || ''})`;
+			case 'fs_file_info':
+				return `File Info(${params.path || ''})`;
+			// Orchestration tools
+			case 'spawn_agent': {
+				const taskDesc = String(params.task_description || '');
+				const displayTask = taskDesc.length > 50 ? taskDesc.slice(0, 47) + '...' : taskDesc;
+				return `Spawn Agent("${displayTask}")`;
+			}
+			case 'await_agent':
+				return `Await Agent(${params.run_id || ''})`;
+			case 'get_agent_status':
+				return `Get Agent Status(${params.run_id || ''})`;
+			case 'list_agents':
+				return 'List Agents';
 			default:
 				// Fallback: convert snake_case to Title Case
 				const readable = step.tool_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -350,6 +412,11 @@
 									<div class="pl-11">
 										{#if step.error}
 											<p class="text-sm text-brutal-magenta font-medium">{step.error}</p>
+										{/if}
+										{#if isOutputTool(step.tool_name) && getStepOutput(step)}
+											<div class="mt-1 p-2 bg-black/5 border-2 border-black/20 text-xs font-mono max-h-32 overflow-y-auto whitespace-pre-wrap">
+												<span class="italic text-black/70">{getStepOutput(step)}</span>
+											</div>
 										{/if}
 									</div>
 								</div>

@@ -51,8 +51,32 @@
 		'write_file': 'Wrote file',
 		'replace_in_file': 'Replaced in file',
 		'save_memory': 'Saved to memory',
-		'done': 'Completed task'
+		'done': 'Completed task',
+		// Terminal tools
+		'execute_command': 'Executed command',
+		'execute_command_background': 'Background command',
+		'read_terminal_output': 'Read terminal output',
+		// Filesystem tools
+		'fs_read_file': 'Read file from disk',
+		'fs_write_file': 'Wrote file to disk',
+		'fs_list_directory': 'Listed directory',
+		'fs_delete_file': 'Deleted file',
+		'fs_move_file': 'Moved file',
+		'fs_file_info': 'Got file info',
+		// Orchestration tools
+		'spawn_agent': 'Spawned agent',
+		'await_agent': 'Awaited agent',
+		'get_agent_status': 'Checked agent status',
+		'list_agents': 'Listed agents'
 	};
+
+	// Tools that should show their params underneath in the results log
+	const outputTools = new Set([
+		'execute_command', 'execute_command_background', 'read_terminal_output',
+		'fs_read_file', 'fs_write_file', 'fs_list_directory',
+		'fs_delete_file', 'fs_move_file', 'fs_file_info',
+		'spawn_agent', 'await_agent', 'get_agent_status', 'list_agents'
+	]);
 
 	function getToolDisplay(toolName?: string): string {
 		if (!toolName) return 'Processing';
@@ -509,6 +533,10 @@
 							{#if result.tool_name === 'save_memory' && result.tool_params}
 								<div class="ml-7 mt-1 p-2 bg-brutal-yellow/30 border-2 border-black text-xs font-mono max-h-24 overflow-y-auto">
 									{result.tool_params}
+								</div>
+							{:else if result.tool_name && outputTools.has(result.tool_name) && result.tool_params}
+								<div class="ml-7 mt-1 p-2 bg-black/5 border-2 border-black/20 text-xs font-mono max-h-24 overflow-y-auto whitespace-pre-wrap">
+									<span class="italic text-black/70">{result.tool_params}</span>
 								</div>
 							{/if}
 						</div>
