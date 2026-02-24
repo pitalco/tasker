@@ -1,6 +1,7 @@
 // Tools module - tool registry and implementations for AI agent automation
 
 pub mod browser_tools;
+pub mod excel_tools;
 pub mod filesystem_tools;
 pub mod memory_tools;
 pub mod orchestration_tools;

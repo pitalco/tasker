@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::browser::{BrowserManager, SelectorMap};
-use crate::runs::RunRepository;
 
 /// A memory/note stored during a run
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,8 +172,6 @@ pub struct ToolContext {
     pub browser: Arc<BrowserManager>,
     /// Current selector map from the page (updated before each LLM turn)
     pub selector_map: Arc<RwLock<SelectorMap>>,
-    /// Repository for file storage operations
-    pub file_repository: Option<Arc<RunRepository>>,
     /// In-memory storage for notes/memories during this run
     pub memories: Arc<RwLock<Vec<Memory>>>,
     /// Terminal session for command execution (lazy-init per run)

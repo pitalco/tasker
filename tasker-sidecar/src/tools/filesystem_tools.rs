@@ -7,7 +7,7 @@ use super::registry::{Tool, ToolContext, ToolDefinition, ToolResult};
 
 /// Validate that a path is within the allowed directories (security-critical).
 /// Returns the canonicalized path if valid.
-fn validate_path(path: &str, allowed_dirs: &[PathBuf]) -> std::result::Result<PathBuf, String> {
+pub fn validate_path(path: &str, allowed_dirs: &[PathBuf]) -> std::result::Result<PathBuf, String> {
     if allowed_dirs.is_empty() {
         return Err(
             "No filesystem access configured. Add allowed directories in Settings > Filesystem Access."

@@ -10,12 +10,9 @@
 		formatDuration
 	} from '$lib/services/runsService';
 	import { getWebSocket, startSidecar } from '$lib/services/sidecarService';
-	import { listFilesForRun, deleteFile as deleteFileApi } from '$lib/services/filesService';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
 	import type { RunStep } from '$lib/types/run';
-	import type { TaskerFile } from '$lib/types/file';
-	import FileList from '$lib/components/files/FileList.svelte';
 
 	// SECURITY: Sanitize HTML to prevent XSS attacks
 	function sanitizeHtml(html: string): string {
@@ -135,10 +132,8 @@
 		}
 	}
 
-	let activeTab = $state<'steps' | 'result' | 'files'>('result');
+	let activeTab = $state<'steps' | 'result'>('result');
 	let isLive = $state(false);
-	let runFiles = $state<TaskerFile[]>([]);
-	let filesLoading = $state(false);
 
 	const runId = $derived($page.params.id);
 
@@ -211,38 +206,6 @@
 		goto('/runs');
 	}
 
-	async function loadFiles() {
-		if (!runId) return;
-		filesLoading = true;
-		try {
-			const response = await listFilesForRun(runId);
-			runFiles = response.files;
-		} catch (e) {
-			console.error('Failed to load files:', e);
-		} finally {
-			filesLoading = false;
-		}
-	}
-
-	async function handleDeleteFile(file: TaskerFile) {
-		if (!confirm(`Are you sure you want to delete "${file.file_name}"?`)) {
-			return;
-		}
-		try {
-			await deleteFileApi(file.id);
-			runFiles = runFiles.filter((f) => f.id !== file.id);
-		} catch (e) {
-			console.error('Failed to delete file:', e);
-			alert('Failed to delete file');
-		}
-	}
-
-	function switchToFilesTab() {
-		activeTab = 'files';
-		if (runFiles.length === 0 && !filesLoading) {
-			loadFiles();
-		}
-	}
 </script>
 
 <div class="space-y-6">
@@ -372,15 +335,7 @@
 			>
 				STEPS ({runsState.currentSteps.length})
 			</button>
-			<button
-				onclick={switchToFilesTab}
-				class="px-6 py-3 font-bold border-3 border-black border-b-0 cursor-pointer {activeTab === 'files'
-					? 'bg-black text-white'
-					: 'bg-brutal-purple text-black hover:bg-brutal-purple/80'}"
-			>
-				FILES
-			</button>
-		</div>
+			</div>
 
 		<!-- Steps tab -->
 		{#if activeTab === 'steps'}
@@ -451,10 +406,6 @@
 			</div>
 		{/if}
 
-		<!-- Files tab -->
-		{#if activeTab === 'files'}
-			<FileList files={runFiles} loading={filesLoading} showDelete={true} onDelete={handleDeleteFile} />
-		{/if}
 	{:else}
 		<div class="card-brutal bg-white p-8 text-center">
 			<p class="font-bold text-black/60">Run not found</p>

@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::registry::{Tool, ToolContext, ToolDefinition, ToolResult};
-use crate::runs::RunFile;
 
 // ============================================================================
 // Helper Functions
@@ -1095,286 +1094,6 @@ impl Tool for EvaluateJsTool {
 }
 
 // ============================================================================
-// File Tools (Database-backed storage for run files)
-// ============================================================================
-
-/// List files stored for the current run
-pub struct ListFilesTool;
-
-#[async_trait]
-impl Tool for ListFilesTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "list_files".to_string(),
-            description: "List all files stored for the current run".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {},
-                "required": []
-            }),
-        }
-    }
-
-    async fn execute(&self, _params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let repo = match &ctx.file_repository {
-            Some(r) => r,
-            None => return Ok(ToolResult::error("File storage not available")),
-        };
-
-        match repo.list_files_for_run(&ctx.run_id) {
-            Ok(files) => {
-                if files.is_empty() {
-                    return Ok(ToolResult::success("No files stored for this run"));
-                }
-
-                let file_list: Vec<Value> = files
-                    .iter()
-                    .map(|f| {
-                        json!({
-                            "file_path": f.file_path,
-                            "file_name": f.file_name,
-                            "mime_type": f.mime_type,
-                            "size_bytes": f.file_size,
-                            "created_at": f.created_at.to_rfc3339()
-                        })
-                    })
-                    .collect();
-
-                Ok(ToolResult::success_with_data(
-                    format!("Found {} files", files.len()),
-                    json!({ "files": file_list }),
-                ))
-            }
-            Err(e) => Ok(ToolResult::error(format!("Failed to list files: {}", e))),
-        }
-    }
-}
-
-/// Read a file from storage
-pub struct ReadFileTool;
-
-#[async_trait]
-impl Tool for ReadFileTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "read_file".to_string(),
-            description: "Read the contents of a file from storage. Use virtual paths like '/output/data.csv'.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The virtual path to the file (e.g., '/output/report.csv', '/data/results.json')"
-                    }
-                },
-                "required": ["file_path"]
-            }),
-        }
-    }
-
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let file_path = params["file_path"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path' parameter"))?;
-
-        let repo = match &ctx.file_repository {
-            Some(r) => r,
-            None => return Ok(ToolResult::error("File storage not available")),
-        };
-
-        match repo.get_file_by_path(&ctx.run_id, file_path) {
-            Ok(Some(file)) => {
-                // Try to convert to string for text files
-                match String::from_utf8(file.content.clone()) {
-                    Ok(text) => {
-                        let preview = if text.len() > 10000 {
-                            format!(
-                                "{}...\n[Truncated. Total {} chars]",
-                                &text[..10000],
-                                text.len()
-                            )
-                        } else {
-                            text
-                        };
-                        Ok(ToolResult::success_with_data(
-                            format!("Read file: {}", file_path),
-                            json!({ "content": preview, "mime_type": file.mime_type }),
-                        ))
-                    }
-                    Err(_) => {
-                        // Binary file - return base64
-                        use base64::Engine;
-                        Ok(ToolResult::success_with_data(
-                            format!(
-                                "Read binary file: {} ({} bytes)",
-                                file_path, file.file_size
-                            ),
-                            json!({
-                                "content_base64": base64::engine::general_purpose::STANDARD.encode(&file.content),
-                                "mime_type": file.mime_type,
-                                "is_binary": true
-                            }),
-                        ))
-                    }
-                }
-            }
-            Ok(None) => Ok(ToolResult::error(format!("File not found: {}", file_path))),
-            Err(e) => Ok(ToolResult::error(format!(
-                "Failed to read file '{}': {}",
-                file_path, e
-            ))),
-        }
-    }
-}
-
-/// Write content to a file in storage
-pub struct WriteFileTool;
-
-#[async_trait]
-impl Tool for WriteFileTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "write_file".to_string(),
-            description: "Write content to a file in storage (creates or overwrites). Use virtual paths like '/output/data.csv'. Maximum file size is 50 MB.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The virtual path to write to (e.g., '/output/report.csv', '/data/results.json')"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content to write to the file"
-                    }
-                },
-                "required": ["file_path", "content"]
-            }),
-        }
-    }
-
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let file_path = params["file_path"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path' parameter"))?;
-        let content = params["content"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'content' parameter"))?;
-
-        let repo = match &ctx.file_repository {
-            Some(r) => r,
-            None => return Ok(ToolResult::error("File storage not available")),
-        };
-
-        let file = RunFile::new(
-            ctx.run_id.clone(),
-            ctx.workflow_id.clone(),
-            file_path.to_string(),
-            content.as_bytes().to_vec(),
-        );
-
-        match repo.upsert_file(&file) {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Wrote {} bytes to '{}'",
-                content.len(),
-                file_path
-            ))),
-            Err(e) => Ok(ToolResult::error(format!(
-                "Failed to write file '{}': {}",
-                file_path, e
-            ))),
-        }
-    }
-}
-
-/// Replace content in a file
-pub struct ReplaceInFileTool;
-
-#[async_trait]
-impl Tool for ReplaceInFileTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "replace_in_file".to_string(),
-            description: "Find and replace text in a file stored in the database".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The virtual path to the file"
-                    },
-                    "find": {
-                        "type": "string",
-                        "description": "The text to find"
-                    },
-                    "replace": {
-                        "type": "string",
-                        "description": "The text to replace with"
-                    }
-                },
-                "required": ["file_path", "find", "replace"]
-            }),
-        }
-    }
-
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolResult> {
-        let file_path = params["file_path"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path' parameter"))?;
-        let find = params["find"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'find' parameter"))?;
-        let replace = params["replace"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'replace' parameter"))?;
-
-        let repo = match &ctx.file_repository {
-            Some(r) => r,
-            None => return Ok(ToolResult::error("File storage not available")),
-        };
-
-        // Read existing file
-        let file = match repo.get_file_by_path(&ctx.run_id, file_path) {
-            Ok(Some(f)) => f,
-            Ok(None) => return Ok(ToolResult::error(format!("File not found: {}", file_path))),
-            Err(e) => return Ok(ToolResult::error(format!("Failed to read file: {}", e))),
-        };
-
-        // Convert to string
-        let content = match String::from_utf8(file.content) {
-            Ok(s) => s,
-            Err(_) => return Ok(ToolResult::error("Cannot replace in binary file")),
-        };
-
-        let count = content.matches(find).count();
-        if count == 0 {
-            return Ok(ToolResult::error(format!(
-                "Text '{}' not found in file",
-                find
-            )));
-        }
-
-        let new_content = content.replace(find, replace);
-
-        // Create updated file
-        let updated_file = RunFile::new(
-            ctx.run_id.clone(),
-            ctx.workflow_id.clone(),
-            file_path.to_string(),
-            new_content.as_bytes().to_vec(),
-        );
-
-        match repo.upsert_file(&updated_file) {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Replaced {} occurrences in '{}'",
-                count, file_path
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file: {}", e))),
-        }
-    }
-}
-
-// ============================================================================
 // Completion Tool
 // ============================================================================
 
@@ -1458,12 +1177,6 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     // JavaScript
     registry.register(Arc::new(EvaluateJsTool));
 
-    // Files
-    registry.register(Arc::new(ListFilesTool));
-    registry.register(Arc::new(ReadFileTool));
-    registry.register(Arc::new(WriteFileTool));
-    registry.register(Arc::new(ReplaceInFileTool));
-
     // Memory
     use super::memory_tools::{DeleteMemoryTool, RecallMemoriesTool, SaveMemoryTool};
     registry.register(Arc::new(SaveMemoryTool));
@@ -1475,6 +1188,12 @@ pub fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(ExecuteCommandTool));
     registry.register(Arc::new(ExecuteCommandBackgroundTool));
     registry.register(Arc::new(ReadTerminalOutputTool));
+
+    // Excel
+    use super::excel_tools::{CreateExcelTool, ReadExcelTool, EditExcelTool};
+    registry.register(Arc::new(CreateExcelTool));
+    registry.register(Arc::new(ReadExcelTool));
+    registry.register(Arc::new(EditExcelTool));
 
     // Filesystem (real disk access, sandboxed)
     use super::filesystem_tools::{

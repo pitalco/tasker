@@ -51,8 +51,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # Secure credential storage (to read auth token)
 keyring = "3"
 
-# MIME type detection for file storage
-mime_guess = "2.0"
+# Excel file support
+rust_xlsxwriter = "0.82"
+calamine = "0.26"
 
 [dev-dependencies]
 tokio-test = "0.4"

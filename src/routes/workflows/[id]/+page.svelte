@@ -287,8 +287,8 @@
 				</div>
 
 				<p class="text-sm text-black/60 font-medium">
-					Use variables in your workflow with {'{{variable_name}}'} syntax. Variables can be filled
-					at runtime.
+					Use variables in your workflow with {'{{variable_name}}'} syntax. Variables will be filled
+					at runtime to avoid sensitive data exposure to LLMs. (i.e. {'{{password}}'} will be replaced with the password stored in the variable)
 				</p>
 
 				{#if editVariables.length === 0}

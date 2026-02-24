@@ -237,5 +237,27 @@ When creating or exporting files, ensure proper formatting:
 ### General
 - Match column count to header count in tabular data
 - Validate data format before saving/exporting
+
+## Working Memory (MANDATORY)
+
+You MUST include a `<context>` block in EVERY response, no exceptions. This is your working memory that persists across turns — older messages get trimmed, so anything not in your context block will be LOST.
+
+Format — include this in EVERY text response:
+<context>
+GOAL: [What you're trying to accomplish]
+PROGRESS: [What you've done so far, key milestones]
+FINDINGS: [Important data, URLs, element indices, error messages]
+STATE: [Current page/situation, what you're looking at]
+PLAN: [Next 2-3 steps you intend to take]
+BLOCKERS: [Any issues or obstacles, or "none"]
+</context>
+
+Rules:
+- EVERY response MUST contain exactly one `<context>` block
+- Update it each turn — keep it current, not stale
+- Be concise but complete — this is your only memory of past turns
+- Include specific values (URLs, element text, data extracted) not vague summaries
+- If you saved memories with save_memory, note the keys here too
+- NO EXCUSES: Even error responses or single-action turns need a context block
 "#;
 

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
+use genai::chat::{ChatMessage, ChatRequest, ContentPart, MessageContent, Tool, ToolResponse};
 use genai::resolver::{AuthData, AuthResolver};
 use genai::{Client, ModelIden};
 use serde_json::{json, Value};
@@ -23,6 +23,12 @@ use crate::llm::prompts::SYSTEM_PROMPT;
 
 const MAX_STEPS: usize = 50;
 const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+/// Max characters for the agent's context block (working memory)
+const MAX_CONTEXT_CHARS: usize = 16_000;
+/// Number of recent messages to keep after system + initial prompt
+const MAX_RECENT_MESSAGES: usize = 8;
+/// Max characters for a single tool response stored in history
+const MAX_TOOL_RESPONSE_CHARS: usize = 4_000;
 
 /// Configuration for a run execution
 pub struct ExecutorConfig {
@@ -169,13 +175,12 @@ Keep taking actions until the condition above is clearly met.
         // Create terminal session for this run
         let terminal_session = Arc::new(tokio::sync::Mutex::new(TerminalSession::new()));
 
-        // Create tool context with file repository access
+        // Create tool context
         let ctx = ToolContext {
             run_id: run_id.clone(),
             workflow_id: run.workflow_id.clone(),
             browser: Arc::clone(&self.browser),
             selector_map: Arc::clone(&selector_map),
-            file_repository: Some(Arc::new(self.logger.repository().clone())),
             memories: Arc::clone(&memories),
             terminal_session: Arc::clone(&terminal_session),
             allowed_directories: self.config.allowed_directories.clone(),
@@ -210,6 +215,7 @@ Keep taking actions until the condition above is clearly met.
         let mut step_number = 0;
         let mut first_iteration = true;
         let mut last_llm_call: Option<Instant> = None;
+        let mut context_block: Option<String> = None;
 
         // Get max_steps from run metadata (workflow override) or use config default
         let max_steps = run
@@ -250,8 +256,8 @@ Keep taking actions until the condition above is clearly met.
                 let req = self.build_request_with_screenshot(&history, &user_prompt, screenshot, &tools);
                 (user_prompt.clone(), req)
             } else {
-                // Subsequent iterations: get current page state + screenshot + memories
-                let (text, req) = self.build_current_state_request(&history, &selector_map, &memories, &tools, step_number, max_steps).await;
+                // Subsequent iterations: get current page state + screenshot + memories + context
+                let (text, req) = self.build_current_state_request(&history, &selector_map, &memories, &tools, step_number, max_steps, context_block.as_deref()).await;
                 (text, req)
             };
             first_iteration = false;
@@ -332,6 +338,15 @@ Keep taking actions until the condition above is clearly met.
             // Extract text content before consuming the response
             let text_content = llm_response.first_text().map(|s| s.to_string());
 
+            // Extract context block from assistant's text response (working memory)
+            if let Some(ref text) = text_content {
+                if let Some(ctx_text) = extract_context_block(text) {
+                    tracing::debug!("Updated agent context block ({} chars)", ctx_text.len());
+                    self.logger.debug(run_id, format!("Agent context updated ({} chars)", ctx_text.len()));
+                    context_block = Some(ctx_text);
+                }
+            }
+
             // Check for tool calls
             let tool_calls = llm_response.into_tool_calls();
 
@@ -349,6 +364,7 @@ Keep taking actions until the condition above is clearly met.
 
             // Process each tool call
             let mut tool_responses = Vec::new();
+            let mut tool_response_names = Vec::new();
             let mut is_done = false;
 
             for tool_call in &tool_calls {
@@ -441,6 +457,7 @@ Keep taking actions until the condition above is clearly met.
                     tool_call.call_id.clone(),
                     response_content.to_string(),
                 ));
+                tool_response_names.push(tool_name.clone());
 
                 // Check if done
                 if result.is_done {
@@ -469,7 +486,7 @@ Keep taking actions until the condition above is clearly met.
             // The current page state is always included in the current message, so we don't need old ones
             // Memory system handles important data persistence
 
-            // 1. The assistant's tool calls - convert back to genai format for history
+            // 1. The assistant's response - include both text (with context) and tool calls
             let genai_tool_calls: Vec<genai::chat::ToolCall> = tool_calls
                 .iter()
                 .map(|tc| genai::chat::ToolCall {
@@ -478,21 +495,35 @@ Keep taking actions until the condition above is clearly met.
                     fn_arguments: tc.fn_arguments.clone(),
                 })
                 .collect();
-            history.push(ChatMessage::from(genai_tool_calls));
 
-            // 2. The tool responses
-            for response in tool_responses {
-                history.push(ChatMessage::from(response));
+            // Build assistant message with text + tool calls so context is preserved in history
+            let mut assistant_parts: Vec<ContentPart> = Vec::new();
+            if let Some(ref text) = text_content {
+                assistant_parts.push(ContentPart::from_text(text));
+            }
+            for tc in &genai_tool_calls {
+                assistant_parts.push(ContentPart::from(tc.clone()));
+            }
+            let assistant_content = MessageContent::from_parts(assistant_parts);
+            history.push(ChatMessage::assistant(assistant_content));
+
+            // 2. The tool responses (sanitized to remove large binary data from history)
+            for (i, response) in tool_responses.into_iter().enumerate() {
+                let tool_name = tool_response_names.get(i).map(|s| s.as_str()).unwrap_or("");
+                let sanitized_content = sanitize_tool_response_for_history(&response.content, tool_name);
+                history.push(ChatMessage::from(ToolResponse::new(
+                    response.call_id,
+                    sanitized_content,
+                )));
             }
 
-            // Sliding window: keep only system prompt + initial user prompt + last 10 steps worth of messages
-            // Each step adds ~2-3 messages (tool calls + responses), so keep last ~30 messages after the first 2
-            const MAX_HISTORY_MESSAGES: usize = 32; // 2 initial + 30 for ~10 steps
-            if history.len() > MAX_HISTORY_MESSAGES {
-                // Keep first 2 (system + initial user prompt) and last 30
-                let to_remove = history.len() - MAX_HISTORY_MESSAGES;
+            // Sliding window: keep system prompt + initial user prompt + last few turns
+            // Context block captures important state from trimmed history, so we can keep a tight window
+            let max_with_prefix = 2 + MAX_RECENT_MESSAGES; // 2 initial (system + user) + recent
+            if history.len() > max_with_prefix {
+                let to_remove = history.len() - max_with_prefix;
                 history.drain(2..2 + to_remove);
-                tracing::debug!("Trimmed {} old messages from history", to_remove);
+                tracing::debug!("Trimmed {} old messages from history (context block preserves state)", to_remove);
             }
         }
 
@@ -545,7 +576,7 @@ Keep taking actions until the condition above is clearly met.
         req
     }
 
-    /// Build request with current page state (text + screenshot + memories)
+    /// Build request with current page state (text + screenshot + memories + context)
     async fn build_current_state_request(
         &self,
         history: &[ChatMessage],
@@ -554,6 +585,7 @@ Keep taking actions until the condition above is clearly met.
         tools: &[Tool],
         step_number: usize,
         max_steps: usize,
+        previous_context: Option<&str>,
     ) -> (String, ChatRequest) {
         let url = self.browser.current_url().await.unwrap_or_default();
         let title = self.browser.get_title().await.unwrap_or_default();
@@ -567,8 +599,9 @@ Keep taking actions until the condition above is clearly met.
         // Get current memories snapshot
         let memories_snapshot = memories.read().await;
 
-        // Build text content with memories, allowed directories, and step info
+        // Build text content with context, memories, allowed directories, and step info
         let text = UserMessageBuilder::new()
+            .with_previous_context(previous_context)
             .with_memories(&memories_snapshot)
             .with_allowed_directories(&self.config.allowed_directories)
             .with_browser_state(&url, &title, &dom_result)
@@ -601,6 +634,56 @@ fn is_browser_tool(name: &str) -> bool {
             | "select_dropdown_option"
             | "execute_javascript"
     )
+}
+
+/// Sanitize a tool response for history storage.
+/// Strips base64 image data and truncates oversized responses to save tokens.
+fn sanitize_tool_response_for_history(response_json: &str, tool_name: &str) -> String {
+    // For screenshot tool, just return a short summary — the screenshot is already
+    // captured separately and the agent gets a fresh one each turn
+    if tool_name == "screenshot" {
+        return r#"{"success":true,"content":"Screenshot captured (image omitted from history)"}"#.to_string();
+    }
+
+    // For other tools, truncate if too large
+    if response_json.len() <= MAX_TOOL_RESPONSE_CHARS {
+        return response_json.to_string();
+    }
+
+    // Try to preserve the structure: keep first part + truncation notice
+    let truncated: String = response_json.chars().take(MAX_TOOL_RESPONSE_CHARS).collect();
+    format!(
+        "{}... [TRUNCATED - response was {} chars, kept {}]",
+        truncated,
+        response_json.len(),
+        MAX_TOOL_RESPONSE_CHARS
+    )
+}
+
+/// Extract the `<context>...</context>` block from assistant text response.
+/// Returns the inner content trimmed, capped at MAX_CONTEXT_CHARS.
+fn extract_context_block(text: &str) -> Option<String> {
+    let start_tag = "<context>";
+    let end_tag = "</context>";
+
+    let start = text.find(start_tag)?;
+    let content_start = start + start_tag.len();
+    let end = text[content_start..].find(end_tag)?;
+    let content = text[content_start..content_start + end].trim();
+
+    if content.is_empty() {
+        return None;
+    }
+
+    if content.len() > MAX_CONTEXT_CHARS {
+        Some(format!(
+            "{}\n[TRUNCATED - context exceeded {} chars]",
+            &content[..MAX_CONTEXT_CHARS],
+            MAX_CONTEXT_CHARS
+        ))
+    } else {
+        Some(content.to_string())
+    }
 }
 
 /// Replace {{variable_name}} placeholders in JSON params with actual values.

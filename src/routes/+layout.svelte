@@ -67,7 +67,6 @@
 	const navItems = [
 		{ href: '/', label: 'Workflows', icon: 'stack' },
 		{ href: '/runs', label: 'Runs', icon: 'bolt' },
-		{ href: '/files', label: 'Files', icon: 'folder' },
 		{ href: '/settings', label: 'Settings', icon: 'cog' }
 	];
 </script>

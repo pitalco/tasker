@@ -6,6 +6,7 @@ use crate::tools::Memory;
 
 /// Builds the user message for each LLM turn
 pub struct UserMessageBuilder {
+    previous_context: Option<String>,
     recorded_workflow: Option<Vec<RecordedAction>>,
     custom_instructions: Option<String>,
     memories: Vec<Memory>,
@@ -20,6 +21,7 @@ pub struct UserMessageBuilder {
 impl UserMessageBuilder {
     pub fn new() -> Self {
         Self {
+            previous_context: None,
             recorded_workflow: None,
             custom_instructions: None,
             memories: Vec::new(),
@@ -30,6 +32,12 @@ impl UserMessageBuilder {
             max_steps: None,
             allowed_directories: Vec::new(),
         }
+    }
+
+    /// Set the previous context block from the agent's last response
+    pub fn with_previous_context(mut self, context: Option<&str>) -> Self {
+        self.previous_context = context.map(|s| s.to_string());
+        self
     }
 
     /// Set the current step number and max steps
@@ -74,6 +82,14 @@ impl UserMessageBuilder {
     /// Build the user message text (without screenshot - that's added separately)
     pub fn build(&self) -> String {
         let mut parts = Vec::new();
+
+        // Add previous context block FIRST (agent's working memory from last turn)
+        if let Some(ref context) = self.previous_context {
+            parts.push(format!(
+                "<previous_context>\n{}\n</previous_context>",
+                context
+            ));
+        }
 
         // Add recorded workflow section if present
         if let Some(ref workflow) = self.recorded_workflow {
