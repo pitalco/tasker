@@ -9,10 +9,9 @@ use tasker_sidecar::api::{routes::create_router, state::AppState};
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing with filter to suppress noisy chromiumoxide logs
+    // Initialize tracing
     let filter = tracing_subscriber::EnvFilter::from_default_env()
-        .add_directive("chromiumoxide::conn=off".parse().unwrap())
-        .add_directive("chromiumoxide::handler=off".parse().unwrap());
+        .add_directive("tasker_sidecar=info".parse().unwrap());
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())

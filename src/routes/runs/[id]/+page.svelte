@@ -30,34 +30,38 @@
 		const params = step.params || {};
 
 		switch (step.tool_name) {
-			case 'search_google':
-				return `Searched Google(query: "${params.query || ''}")`;
-			case 'go_to_url':
-				return `Navigated to URL(${params.url || ''})`;
 			case 'click_element':
 				return `Clicked Element(index: ${params.index ?? ''})`;
-			case 'input_text':
+			case 'input_text': {
 				const text = String(params.text || '');
 				const displayText = text.length > 30 ? text.slice(0, 27) + '...' : text;
 				return `Typed Text(index: ${params.index ?? ''}, text: "${displayText}")`;
-			case 'select_dropdown_option':
-				return `Selected Option(index: ${params.index ?? ''}, option: "${params.option || ''}")`;
-			case 'scroll_down':
-				return `Scrolled Down(${params.amount ? `${params.amount}px` : 'default'})`;
-			case 'scroll_up':
-				return `Scrolled Up(${params.amount ? `${params.amount}px` : 'default'})`;
-			case 'go_back':
-				return 'Went Back';
-			case 'send_keys':
-				return `Pressed Keys(${params.keys || ''})`;
-			case 'execute_javascript':
-				const script = String(params.script || '');
-				const displayScript = script.length > 40 ? script.slice(0, 37) + '...' : script;
-				return `Ran Script(${displayScript})`;
-			case 'extract_page_content':
-				return 'Extracted Page Content';
-			case 'get_dropdown_options':
-				return `Got Dropdown Options(index: ${params.index ?? ''})`;
+			}
+			case 'desktop_click':
+				return `Clicked at (${params.x ?? ''}, ${params.y ?? ''})`;
+			case 'desktop_type': {
+				const text = String(params.text || '');
+				const displayText = text.length > 30 ? text.slice(0, 27) + '...' : text;
+				return `Typed "${displayText}"`;
+			}
+			case 'desktop_key':
+				return `Pressed Keys(${params.key || ''})`;
+			case 'desktop_scroll':
+				return `Scrolled ${params.direction || 'down'}`;
+			case 'desktop_drag':
+				return `Dragged (${params.start_x ?? ''},${params.start_y ?? ''}) to (${params.end_x ?? ''},${params.end_y ?? ''})`;
+			case 'desktop_mouse_move':
+				return `Moved Mouse to (${params.x ?? ''}, ${params.y ?? ''})`;
+			case 'desktop_zoom':
+				return `Zoomed Region (${params.x ?? ''},${params.y ?? ''} ${params.width ?? ''}x${params.height ?? ''})`;
+			case 'open_application':
+				return `Opened App(${params.name || ''})`;
+			case 'list_windows':
+				return 'Listed Windows';
+			case 'focus_window':
+				return `Focused Window(${params.title || params.process_name || ''})`;
+			case 'wait':
+				return `Waited ${params.seconds || ''}s`;
 			case 'done':
 				return 'Completed Task';
 			case 'save_memory': {
@@ -66,9 +70,11 @@
 				const keyPart = params.key ? `key: "${params.key}", ` : '';
 				return `Save Memory(${keyPart}"${displayContent}")`;
 			}
+			case 'recall_memories':
+				return 'Recalled Memories';
 			default:
 				// Fallback: convert snake_case to Title Case
-				const readable = step.tool_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+				const readable = step.tool_name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
 				return readable;
 		}
 	}

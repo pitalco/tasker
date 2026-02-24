@@ -6,7 +6,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
-use super::handlers::{files, health, providers, recording, replay, runs, workflow};
+use super::handlers::{files, health, providers, replay, runs, workflow};
 use super::state::AppState;
 use super::websocket::ws_handler;
 
@@ -29,24 +29,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health::health_check))
         // LLM Providers
         .route("/providers", get(providers::list_providers))
-        // Recording endpoints
-        .route("/recording/start", post(recording::start_recording))
-        .route(
-            "/recording/:session_id/stop",
-            post(recording::stop_recording),
-        )
-        .route(
-            "/recording/:session_id/cancel",
-            post(recording::cancel_recording),
-        )
-        .route(
-            "/recording/:session_id/status",
-            get(recording::get_recording_status),
-        )
-        // Replay endpoints
+        // Replay endpoints (desktop automation)
         .route("/replay/start", post(replay::start_replay))
         .route("/replay/:session_id/stop", post(replay::stop_replay))
-        .route("/replay/:session_id/status", get(replay::get_replay_status))
+        .route(
+            "/replay/:session_id/status",
+            get(replay::get_replay_status),
+        )
+        // Pause/resume endpoints
+        .route("/runs/:run_id/pause", post(replay::pause_run))
+        .route("/runs/:run_id/resume", post(replay::resume_run))
         // Workflow endpoints
         .route("/workflow", post(workflow::create_workflow))
         // Runs endpoints

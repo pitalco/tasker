@@ -65,16 +65,13 @@ pub fn run() {
             commands::recording::stop_sidecar,
             commands::recording::is_sidecar_running,
             commands::recording::get_sidecar_urls,
-            // Recording commands
-            commands::recording::start_recording,
-            commands::recording::stop_recording,
-            commands::recording::cancel_recording,
-            commands::recording::get_recording_status,
             // Replay commands
             commands::replay::get_llm_providers,
             commands::replay::start_replay,
             commands::replay::stop_replay,
             commands::replay::get_replay_status,
+            commands::replay::pause_run,
+            commands::replay::resume_run,
             // Runs commands
             commands::runs::list_runs,
             commands::runs::get_run,

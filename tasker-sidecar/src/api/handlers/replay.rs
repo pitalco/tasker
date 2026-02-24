@@ -7,8 +7,8 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::browser::BrowserManager;
-use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse, StepResult, Viewport};
+use crate::desktop::DesktopManager;
+use crate::models::{SessionStatusResponse, StartReplayRequest, StartReplayResponse, StepResult};
 use crate::runs::{ExecutorConfig, Run, RunEvent, RunExecutor, RunLogger, RunStatus};
 
 use super::super::state::{AppState, WsEvent};
@@ -16,7 +16,6 @@ use super::super::state::{AppState, WsEvent};
 /// Convert RunStep to StepResult for WebSocket compatibility
 fn step_to_result(step: &crate::runs::RunStep) -> StepResult {
     let params_str = step.params.to_string();
-    // Truncate long params for display
     let params_display = if params_str.len() > 100 {
         format!("{}...", &params_str[..97])
     } else {
@@ -40,19 +39,17 @@ fn step_to_result(step: &crate::runs::RunStep) -> StepResult {
     }
 }
 
-/// Start a workflow replay session
-/// Uses RunExecutor for execution with database persistence
+/// Start a desktop automation replay session
 pub async fn start_replay(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartReplayRequest>,
 ) -> Result<Json<StartReplayResponse>, (StatusCode, String)> {
-    tracing::info!("Starting replay with task_description: {:?}", request.task_description);
+    tracing::info!(
+        "Starting desktop automation with task_description: {:?}",
+        request.task_description
+    );
 
-    let mut workflow = request.workflow.clone();
-
-    // Resolve start_url from metadata or first navigate step if not set
-    workflow.resolve_start_url();
-    tracing::info!("Workflow start_url resolved to: '{}'", workflow.start_url);
+    let workflow = request.workflow.clone();
 
     // Get repository for persistence
     let repo = state.runs_repository.as_ref().ok_or_else(|| {
@@ -67,15 +64,14 @@ pub async fn start_replay(
         Some(workflow.id.clone()),
         Some(workflow.name.clone()),
         request.task_description.clone(),
-        None, // custom_instructions
+        None,
     );
 
-    // Add workflow steps as hints in metadata, include variables for substitution
+    // Add metadata
     let hints = serde_json::to_value(&workflow.steps).unwrap_or_default();
     let variables = serde_json::to_value(&request.variables).unwrap_or_default();
     run.metadata = json!({
         "hints": hints,
-        "start_url": workflow.start_url,
         "variables": variables,
         "stop_when": request.stop_when.as_deref().or(workflow.stop_when.as_deref()),
         "max_steps": request.max_steps.or(workflow.max_steps),
@@ -89,41 +85,35 @@ pub async fn start_replay(
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    // Store in active runs for tracking
+    // Store in active runs
     state.active_runs.insert(run_id.clone(), run.clone());
 
     // Get LLM config
     let provider = request.llm_provider.as_deref().unwrap_or("google");
-    let model = request.llm_model.as_deref().unwrap_or("gemini-3-pro-preview");
+    let model = request
+        .llm_model
+        .as_deref()
+        .unwrap_or("gemini-3-pro-preview");
 
-    // Load API key from local config
+    // Load API key
     let api_key = crate::config::get_api_key(provider);
 
-    // Set up environment variable for the provider (using thread-safe helper)
     if let Some(ref key) = api_key {
         let env_var = crate::config::get_env_var_for_provider(provider);
         crate::config::set_api_key_env(env_var, key);
     }
 
-    // Create browser manager
-    let browser = Arc::new(BrowserManager::new());
+    // Create DesktopManager
+    let desktop = Arc::new(DesktopManager::new().map_err(|e| {
+        tracing::error!("Failed to create DesktopManager: {}", e);
+        let _ = repo.update_run_status(&run_id, RunStatus::Failed, Some(&e.to_string()));
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?);
 
-    // Get viewport from workflow metadata
-    let viewport = workflow.metadata.browser_viewport.clone().unwrap_or(Viewport {
-        width: 1280,
-        height: 720,
-    });
-
-    // Launch browser
-    browser
-        .launch_incognito(&workflow.start_url, request.headless, Some(viewport))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to launch browser: {}", e);
-            // Clean up the run record
-            let _ = repo.update_run_status(&run_id, RunStatus::Failed, Some(&e.to_string()));
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        })?;
+    // Store desktop manager for pause/resume
+    state
+        .desktop_managers
+        .insert(run_id.clone(), Arc::clone(&desktop));
 
     // Create logger and executor
     let logger = RunLogger::new(repo.clone());
@@ -132,17 +122,17 @@ pub async fn start_replay(
         model: model.to_string(),
         api_key,
         max_steps: 50,
-        headless: request.headless,
         provider: Some(provider.to_string()),
-        min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
-        capture_screenshots: true, // Enable screenshots by default for debugging
+        min_llm_delay_ms: 2000,
     };
 
-    let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);
+    let executor = RunExecutor::new(logger.clone(), Arc::clone(&desktop), config);
     let cancel_token = executor.cancel_token();
 
-    // Store cancel token for external cancellation
-    state.active_executors.insert(run_id.clone(), cancel_token);
+    // Store cancel token
+    state
+        .active_executors
+        .insert(run_id.clone(), cancel_token);
 
     // Subscribe to logger events and forward to WebSocket
     let mut event_rx = logger.subscribe();
@@ -153,16 +143,18 @@ pub async fn start_replay(
         while let Ok(event) = event_rx.recv().await {
             match event {
                 RunEvent::Step { run_id: rid, step } => {
-                    // Convert RunStep to StepResult for WebSocket
                     let result = step_to_result(&step);
                     let _ = ws_broadcast.send(WsEvent::ReplayStep {
                         session_id: rid,
                         result,
                     });
                 }
-                RunEvent::Status { run_id: rid, status, error } => {
+                RunEvent::Status {
+                    run_id: rid,
+                    status,
+                    error,
+                } => {
                     if status == RunStatus::Completed || status == RunStatus::Failed {
-                        // Build a minimal ReplaySession for compatibility
                         let session = crate::models::ReplaySession {
                             id: rid.clone(),
                             workflow_id: run_id_ws.clone(),
@@ -181,28 +173,22 @@ pub async fn start_replay(
                         });
                     }
                 }
-                RunEvent::Log { .. } => {
-                    // Logs are persisted to DB, no WebSocket broadcast needed
-                }
+                RunEvent::Log { .. } => {}
             }
         }
     });
 
     // Execute in background
     let run_for_exec = run.clone();
-    let browser_for_cleanup = Arc::clone(&browser);
     let state_for_cleanup = Arc::clone(&state);
     let run_id_for_cleanup = run_id.clone();
     let shutdown_token = state.shutdown_token.clone();
 
     tokio::spawn(async move {
-        // Listen for both executor completion and global shutdown
         let result = tokio::select! {
             res = executor.execute(&run_for_exec) => res,
             _ = shutdown_token.cancelled() => {
-                // Global shutdown - cancel the executor
                 executor.cancel();
-                // Give executor time to handle cancellation
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 Err(anyhow::anyhow!("Process shutdown"))
             }
@@ -213,12 +199,16 @@ pub async fn start_replay(
             Err(e) => tracing::warn!("Run {} interrupted: {}", run_id_for_cleanup, e),
         }
 
-        // Clean up browser
-        let _ = browser_for_cleanup.close().await;
-
-        // Remove from tracking maps
-        state_for_cleanup.active_runs.remove(&run_id_for_cleanup);
-        state_for_cleanup.active_executors.remove(&run_id_for_cleanup);
+        // Clean up
+        state_for_cleanup
+            .active_runs
+            .remove(&run_id_for_cleanup);
+        state_for_cleanup
+            .active_executors
+            .remove(&run_id_for_cleanup);
+        state_for_cleanup
+            .desktop_managers
+            .remove(&run_id_for_cleanup);
     });
 
     tracing::info!("Started run {} for workflow: {}", run_id, workflow.id);
@@ -234,7 +224,6 @@ pub async fn stop_replay(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // Get repository
     let repo = state.runs_repository.as_ref().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -242,27 +231,27 @@ pub async fn stop_replay(
         )
     })?;
 
-    // Cancel the executor if running
+    // Cancel the executor
     if let Some((_, token)) = state.active_executors.remove(&session_id) {
         token.cancel();
-        // Give executor time to handle cancellation gracefully
         tokio::time::sleep(Duration::from_millis(100)).await;
         tracing::info!("Cancelled executor for run {}", session_id);
     }
 
-    // Update status to cancelled in database
+    // Update status
     repo.update_run_status(&session_id, RunStatus::Cancelled, Some("Cancelled by user"))
         .map_err(|e| {
             tracing::error!("Failed to cancel run: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
 
-    // Remove from active runs
+    // Clean up
     state.active_runs.remove(&session_id);
+    state.desktop_managers.remove(&session_id);
 
     tracing::info!("Stopped/cancelled run {}", session_id);
 
-    Ok(Json(serde_json::json!({ "status": "stopped" })))
+    Ok(Json(json!({ "status": "stopped" })))
 }
 
 /// Get the status of a replay session
@@ -304,4 +293,38 @@ pub async fn get_replay_status(
         current_step: run.steps.len() as i32,
         error: run.error,
     }))
+}
+
+/// Pause a running automation
+pub async fn pause_run(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if let Some(desktop) = state.desktop_managers.get(&run_id) {
+        desktop.pause();
+        tracing::info!("Paused run {}", run_id);
+        Ok(Json(json!({ "status": "paused" })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            format!("Run {} not found or not running", run_id),
+        ))
+    }
+}
+
+/// Resume a paused automation
+pub async fn resume_run(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if let Some(desktop) = state.desktop_managers.get(&run_id) {
+        desktop.resume();
+        tracing::info!("Resumed run {}", run_id);
+        Ok(Json(json!({ "status": "running" })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            format!("Run {} not found or not running", run_id),
+        ))
+    }
 }

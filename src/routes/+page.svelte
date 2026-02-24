@@ -70,7 +70,7 @@
 	<div class="flex items-end justify-between">
 		<div>
 			<h1 class="text-4xl font-bold text-black tracking-tight">Workflows</h1>
-			<p class="text-lg text-black/60 font-medium mt-1">All your saved browser automation workflows</p>
+			<p class="text-lg text-black/60 font-medium mt-1">All your saved desktop automation workflows</p>
 		</div>
 		<div class="flex gap-3">
 			<!-- Hidden file input -->

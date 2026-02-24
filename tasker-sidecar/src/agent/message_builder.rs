@@ -1,15 +1,12 @@
-use crate::browser::DOMExtractionResult;
-use crate::models::RecordedAction;
 use crate::tools::Memory;
 
 /// Builds the user message for each LLM turn
 pub struct UserMessageBuilder {
-    recorded_workflow: Option<Vec<RecordedAction>>,
     custom_instructions: Option<String>,
     memories: Vec<Memory>,
-    url: String,
-    title: String,
-    elements_repr: String,
+    display_info: String,
+    active_window: String,
+    elements_text: String,
     step_number: Option<usize>,
     max_steps: Option<usize>,
 }
@@ -17,12 +14,11 @@ pub struct UserMessageBuilder {
 impl UserMessageBuilder {
     pub fn new() -> Self {
         Self {
-            recorded_workflow: None,
             custom_instructions: None,
             memories: Vec::new(),
-            url: String::new(),
-            title: String::new(),
-            elements_repr: String::new(),
+            display_info: String::new(),
+            active_window: String::new(),
+            elements_text: String::new(),
             step_number: None,
             max_steps: None,
         }
@@ -32,12 +28,6 @@ impl UserMessageBuilder {
     pub fn with_step_info(mut self, step_number: usize, max_steps: usize) -> Self {
         self.step_number = Some(step_number);
         self.max_steps = Some(max_steps);
-        self
-    }
-
-    /// Set the recorded workflow as hints
-    pub fn with_recorded_workflow(mut self, workflow: Option<&[RecordedAction]>) -> Self {
-        self.recorded_workflow = workflow.map(|w| w.to_vec());
         self
     }
 
@@ -53,24 +43,22 @@ impl UserMessageBuilder {
         self
     }
 
-    /// Set the current browser state
-    pub fn with_browser_state(mut self, url: &str, title: &str, dom_result: &DOMExtractionResult) -> Self {
-        self.url = url.to_string();
-        self.title = title.to_string();
-        self.elements_repr = dom_result.llm_representation.clone();
+    /// Set the current desktop state
+    pub fn with_desktop_state(
+        mut self,
+        display_info: &str,
+        active_window: &str,
+        elements_text: &str,
+    ) -> Self {
+        self.display_info = display_info.to_string();
+        self.active_window = active_window.to_string();
+        self.elements_text = elements_text.to_string();
         self
     }
 
     /// Build the user message text (without screenshot - that's added separately)
     pub fn build(&self) -> String {
         let mut parts = Vec::new();
-
-        // Add recorded workflow section if present
-        if let Some(ref workflow) = self.recorded_workflow {
-            if !workflow.is_empty() {
-                parts.push(format_recorded_workflow(workflow));
-            }
-        }
 
         // Add custom instructions if present
         if let Some(ref instructions) = self.custom_instructions {
@@ -87,11 +75,11 @@ impl UserMessageBuilder {
             parts.push(format_memories(&self.memories));
         }
 
-        // Add browser state (always present)
-        parts.push(format_browser_state(
-            &self.url,
-            &self.title,
-            &self.elements_repr,
+        // Add desktop state (always present)
+        parts.push(format_desktop_state(
+            &self.display_info,
+            &self.active_window,
+            &self.elements_text,
             self.step_number,
             self.max_steps,
         ));
@@ -104,20 +92,6 @@ impl Default for UserMessageBuilder {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Format recorded workflow steps as hints
-fn format_recorded_workflow(steps: &[RecordedAction]) -> String {
-    let mut lines = Vec::new();
-    lines.push("<recorded_workflow>".to_string());
-    lines.push("The user previously recorded these steps as a guide:".to_string());
-
-    for step in steps {
-        lines.push(step.to_hint_string());
-    }
-
-    lines.push("</recorded_workflow>".to_string());
-    lines.join("\n")
 }
 
 /// Format memories as context for the LLM
@@ -144,11 +118,11 @@ fn format_memories(memories: &[Memory]) -> String {
     lines.join("\n")
 }
 
-/// Format browser state with indexed elements
-fn format_browser_state(
-    url: &str,
-    title: &str,
-    elements_repr: &str,
+/// Format desktop state with indexed elements
+fn format_desktop_state(
+    display_info: &str,
+    active_window: &str,
+    elements_text: &str,
     step_number: Option<usize>,
     max_steps: Option<usize>,
 ) -> String {
@@ -157,8 +131,8 @@ fn format_browser_state(
         _ => String::new(),
     };
     format!(
-        "<browser_state>\nURL: {}\nTitle: {}{}\n\nInteractive Elements:\n{}</browser_state>",
-        url, title, step_info, elements_repr
+        "<desktop_state>\nScreen: {}\nActive window: \"{}\"{}\n\nInteractive Elements:\n{}\n\nUse click_element(index) for precise clicks. Use desktop_click(x, y) only if the element is not in the list above.\n</desktop_state>",
+        display_info, active_window, step_info, elements_text
     )
 }
 
@@ -169,16 +143,32 @@ mod tests {
     #[test]
     fn test_empty_builder() {
         let msg = UserMessageBuilder::new().build();
-        assert!(msg.contains("<browser_state>"));
+        assert!(msg.contains("<desktop_state>"));
         assert!(msg.contains("Interactive Elements:"));
     }
 
     #[test]
     fn test_with_custom_instructions() {
         let msg = UserMessageBuilder::new()
-            .with_custom_instructions(Some("Search for 'rust programming'"))
+            .with_custom_instructions(Some("Open notepad and type hello"))
             .build();
         assert!(msg.contains("<custom_instructions>"));
-        assert!(msg.contains("Search for 'rust programming'"));
+        assert!(msg.contains("Open notepad and type hello"));
+    }
+
+    #[test]
+    fn test_with_desktop_state() {
+        let msg = UserMessageBuilder::new()
+            .with_desktop_state(
+                "1280x720 (scaled from 1920x1080)",
+                "Notepad - readme.txt",
+                "[1] Button \"File\" at (20, 5)\n[2] Button \"Edit\" at (70, 5)",
+            )
+            .with_step_info(3, 50)
+            .build();
+        assert!(msg.contains("Screen: 1280x720"));
+        assert!(msg.contains("Notepad - readme.txt"));
+        assert!(msg.contains("Step: 3/50"));
+        assert!(msg.contains("[1] Button \"File\""));
     }
 }

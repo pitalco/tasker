@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
-/// Request to start a replay - AI agent is ALWAYS used
+/// Request to start a replay - AI desktop agent
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartReplayRequest {
     pub workflow: serde_json::Value,
@@ -13,7 +13,6 @@ pub struct StartReplayRequest {
     pub task_description: Option<String>,
     pub variables: Option<HashMap<String, serde_json::Value>>,
     pub iterations: Option<i32>,
-    pub headless: Option<bool>,
     /// Optional condition - agent will NOT stop until this is met
     pub stop_when: Option<String>,
     /// Max steps override (None = use global default)
@@ -120,7 +119,6 @@ pub async fn start_replay(app: AppHandle, request: StartReplayRequest) -> Result
         "task_description": request.task_description,
         "variables": request.variables.unwrap_or_default(),
         "iterations": request.iterations.unwrap_or(1),
-        "headless": request.headless.unwrap_or(false),
         "stop_when": request.stop_when,
         "max_steps": request.max_steps,
         "auth_token": auth_token,
@@ -188,4 +186,32 @@ pub async fn get_replay_status(session_id: String) -> Result<ReplayStatusRespons
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn pause_run(session_id: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/runs/{}/pause", SidecarManager::base_url(), session_id);
+
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to pause run: {}", e))?;
+
+    Ok(response.status().is_success())
+}
+
+#[tauri::command]
+pub async fn resume_run(session_id: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/runs/{}/resume", SidecarManager::base_url(), session_id);
+
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to resume run: {}", e))?;
+
+    Ok(response.status().is_success())
 }

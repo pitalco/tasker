@@ -1,8 +1,8 @@
 [package]
 name = "tasker-sidecar"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
-description = "Rust sidecar for Tasker browser automation"
+description = "Rust sidecar for Tasker desktop automation"
 
 [dependencies]
 # Web framework (API server)
@@ -18,15 +18,20 @@ serde_json = "1.0"
 # WebSocket
 futures-util = "0.3"
 
-# Browser automation (CDP - Chrome DevTools Protocol)
-chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
-
 # LLM providers (unified API for Claude, OpenAI, Gemini)
 genai = "0.4"
 
-# Image processing (screenshots)
+# Image processing (screenshots + annotation)
 image = "0.25"
 base64 = "0.22"
+imageproc = "0.25"
+ab_glyph = "0.2"
+
+# Screen capture (cross-platform: Windows, macOS, Linux)
+xcap = "0.8"
+
+# Mouse/keyboard input simulation (cross-platform)
+enigo = { version = "0.3", features = [] }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }
@@ -53,6 +58,10 @@ keyring = "3"
 
 # MIME type detection for file storage
 mime_guess = "2.0"
+
+# Windows-specific: UI Automation tree extraction
+[target.'cfg(windows)'.dependencies]
+uiautomation = "0.24"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -56,14 +56,6 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
     let send_task = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
             let msg = match event {
-                WsEvent::RecordingStep { session_id, step } => WsOutgoing {
-                    msg_type: "recording_step".to_string(),
-                    session_id: Some(session_id),
-                    step: Some(serde_json::to_value(&step).unwrap_or_default()),
-                    result: None,
-                    session: None,
-                    error: None,
-                },
                 WsEvent::ReplayStep { session_id, result } => WsOutgoing {
                     msg_type: "replay_step".to_string(),
                     session_id: Some(session_id),

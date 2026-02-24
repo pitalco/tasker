@@ -1,10 +1,9 @@
 pub mod agent;
 pub mod api;
-pub mod browser;
 pub mod config;
+pub mod desktop;
 pub mod error;
 pub mod llm;
 pub mod models;
-pub mod recording;
 pub mod runs;
 pub mod tools;

@@ -22,9 +22,9 @@
 	const loadingMessages = [
 		'Waking up the robots...',
 		'Brewing digital coffee...',
-		'Teaching browsers new tricks...',
+		'Calibrating the mouse...',
 		'Stretching automation muscles...',
-		'Polishing the chrome...',
+		'Scanning the desktop...',
 		'Initializing awesomeness...',
 		'Almost there...'
 	];
@@ -74,7 +74,7 @@
 
 <svelte:head>
 	<title>Tasker</title>
-	<meta name="description" content="Browser automation recording and replay" />
+	<meta name="description" content="Desktop automation agent" />
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link

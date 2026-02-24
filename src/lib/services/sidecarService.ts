@@ -2,19 +2,6 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Workflow } from '$lib/types/workflow';
 
 // Types
-export interface RecordingResponse {
-	session_id: string;
-	status: string;
-}
-
-export interface RecordingStatus {
-	session_id: string;
-	status: string;
-	step_count: number;
-	current_step?: number;
-	error?: string;
-}
-
 export interface ReplayResponse {
 	session_id: string;
 	status: string;
@@ -32,14 +19,7 @@ export interface LLMProviders {
 	providers: Record<string, string[]>;
 }
 
-export interface StartRecordingOptions {
-	start_url?: string;
-	headless?: boolean;
-	viewport_width?: number;
-	viewport_height?: number;
-}
-
-// AI agent is ALWAYS used - recorded workflow serves as hints
+// AI agent controls the desktop to complete tasks
 export interface StartReplayOptions {
 	workflow: Workflow;
 	llm_provider?: string;
@@ -47,7 +27,6 @@ export interface StartReplayOptions {
 	task_description?: string;
 	variables?: Record<string, unknown>;
 	iterations?: number;
-	headless?: boolean;
 	/** Optional condition - agent will NOT stop until this is met */
 	stop_when?: string;
 	/** Max steps override (undefined = use global default) */
@@ -71,23 +50,6 @@ export async function getSidecarUrls(): Promise<[string, string]> {
 	return invoke<[string, string]>('get_sidecar_urls');
 }
 
-// Recording
-export async function startRecording(options: StartRecordingOptions): Promise<RecordingResponse> {
-	return invoke<RecordingResponse>('start_recording', { request: options });
-}
-
-export async function stopRecording(sessionId: string): Promise<{ name: string; task_description: string }> {
-	return invoke<{ name: string; task_description: string }>('stop_recording', { sessionId });
-}
-
-export async function cancelRecording(sessionId: string): Promise<boolean> {
-	return invoke<boolean>('cancel_recording', { sessionId });
-}
-
-export async function getRecordingStatus(sessionId: string): Promise<RecordingStatus> {
-	return invoke<RecordingStatus>('get_recording_status', { sessionId });
-}
-
 // Replay
 export async function getLLMProviders(): Promise<LLMProviders> {
 	return invoke<LLMProviders>('get_llm_providers');
@@ -103,6 +65,15 @@ export async function stopReplay(sessionId: string): Promise<boolean> {
 
 export async function getReplayStatus(sessionId: string): Promise<ReplayStatus> {
 	return invoke<ReplayStatus>('get_replay_status', { sessionId });
+}
+
+// Pause/Resume
+export async function pauseRun(sessionId: string): Promise<boolean> {
+	return invoke<boolean>('pause_run', { sessionId });
+}
+
+export async function resumeRun(sessionId: string): Promise<boolean> {
+	return invoke<boolean>('resume_run', { sessionId });
 }
 
 // WebSocket connection for real-time updates

@@ -33,24 +33,23 @@
 	let statusPolling = $state<ReturnType<typeof setInterval> | null>(null);
 	let results = $state<Array<{ step_id: string; success: boolean; error?: string; tool_name?: string; tool_params?: string }>>([]);
 
-	// Friendly display names for tools
+	// Friendly display names for desktop automation tools
 	const toolDisplayNames: Record<string, string> = {
-		'click_element': 'Clicked on element',
+		'click_element': 'Clicked element',
 		'input_text': 'Typed text',
-		'select_dropdown_option': 'Selected option',
-		'go_to_url': 'Navigated to URL',
-		'search_google': 'Searched Google',
-		'scroll_down': 'Scrolled down',
-		'scroll_up': 'Scrolled up',
-		'go_back': 'Went back',
-		'send_keys': 'Pressed keys',
-		'execute_javascript': 'Ran script',
-		'extract_page_content': 'Extracted content',
-		'get_dropdown_options': 'Got dropdown options',
-		'read_file': 'Read file',
-		'write_file': 'Wrote file',
-		'replace_in_file': 'Replaced in file',
+		'desktop_click': 'Clicked at coordinates',
+		'desktop_type': 'Typed text',
+		'desktop_key': 'Pressed keys',
+		'desktop_scroll': 'Scrolled',
+		'desktop_drag': 'Dragged',
+		'desktop_mouse_move': 'Moved mouse',
+		'desktop_zoom': 'Zoomed in',
+		'open_application': 'Opened application',
+		'list_windows': 'Listed windows',
+		'focus_window': 'Focused window',
+		'wait': 'Waited',
 		'save_memory': 'Saved to memory',
+		'recall_memories': 'Recalled memories',
 		'done': 'Completed task'
 	};
 
@@ -63,7 +62,6 @@
 	let llmProvider = $state('google');
 	let llmModel = $state('gemini-3-pro-preview');
 	let iterations = $state(1);
-	let headless = $state(false);
 	let taskDescription = $state('');
 
 	// API keys from settings
@@ -181,7 +179,6 @@
 				llm_model: llmModel,
 				task_description: taskDescription || undefined,
 				iterations,
-				headless,
 				variables: variablesMap,
 				stop_when: workflow.stop_when || undefined,
 				max_steps: workflow.max_steps ?? undefined
@@ -414,20 +411,12 @@
 						<p class="text-xs text-black/60 font-medium mt-1">Run the workflow multiple times</p>
 					</div>
 
-					<!-- Headless -->
+					<!-- Desktop Automation Mode Info -->
 					<div class="flex items-center justify-between sm:justify-start sm:gap-6">
 						<div>
-							<div class="font-bold text-black">Headless Mode</div>
-							<div class="text-sm text-black/60 font-medium">Run without visible browser</div>
+							<div class="font-bold text-black">Desktop Mode</div>
+							<div class="text-sm text-black/60 font-medium">Agent controls the desktop directly</div>
 						</div>
-						<button
-							onclick={() => (headless = !headless)}
-							aria-label="Toggle headless mode"
-							class="w-14 h-8 border-3 border-black transition-all cursor-pointer {headless ? 'bg-brutal-lime' : 'bg-white'}"
-							style="box-shadow: 2px 2px 0 0 #000;"
-						>
-							<div class="w-5 h-5 bg-black transition-transform duration-150 {headless ? 'translate-x-6' : 'translate-x-1'}"></div>
-						</button>
 					</div>
 				</div>
 			</div>

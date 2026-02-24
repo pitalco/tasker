@@ -2,20 +2,16 @@ use dashmap::DashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use crate::models::{RecordingSession, ReplaySession, StepResult, WorkflowStep};
-use crate::recording::BrowserRecorder;
+use crate::desktop::DesktopManager;
+use crate::models::{ReplaySession, StepResult};
 use crate::runs::{Run, RunRepository};
 
 /// WebSocket event types broadcast to clients
 #[derive(Debug, Clone)]
 pub enum WsEvent {
-    RecordingStep {
-        session_id: String,
-        step: WorkflowStep,
-    },
     ReplayStep {
         session_id: String,
         result: StepResult,
@@ -37,24 +33,16 @@ pub struct ConnectedClient {
     pub connected_at: Instant,
 }
 
-/// Active recorder with its session
-pub struct ActiveRecorder {
-    pub recorder: Arc<BrowserRecorder>,
-    pub session: RecordingSession,
-    /// Optional client ID that started this recording
-    pub client_id: Option<String>,
-}
-
 /// Shared application state
 pub struct AppState {
-    /// Active recording sessions: session_id -> recorder
-    pub recordings: DashMap<String, ActiveRecorder>,
-
     /// Active runs: run_id -> run (for tracking running executions)
     pub active_runs: DashMap<String, Run>,
 
     /// Cancel tokens for active executors: run_id -> token
     pub active_executors: DashMap<String, CancellationToken>,
+
+    /// Desktop managers for active runs (for pause/resume)
+    pub desktop_managers: DashMap<String, Arc<DesktopManager>>,
 
     /// Global shutdown token for graceful shutdown
     pub shutdown_token: CancellationToken,
@@ -70,10 +58,6 @@ pub struct AppState {
 
     /// Broadcast channel for WebSocket events
     pub ws_broadcast: broadcast::Sender<WsEvent>,
-
-    /// Global lock to prevent multiple concurrent recording starts
-    /// This prevents race condition where two browser instances are launched
-    pub recording_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -93,20 +77,18 @@ impl AppState {
         };
 
         Self {
-            recordings: DashMap::new(),
             active_runs: DashMap::new(),
             active_executors: DashMap::new(),
+            desktop_managers: DashMap::new(),
             shutdown_token: CancellationToken::new(),
             connected_clients: DashMap::new(),
             connection_count: AtomicUsize::new(0),
             runs_repository,
             ws_broadcast: tx,
-            recording_lock: Mutex::new(()),
         }
     }
 
     pub fn broadcast(&self, event: WsEvent) {
-        // Ignore send errors (no receivers)
         let _ = self.ws_broadcast.send(event);
     }
 
@@ -131,7 +113,7 @@ impl AppState {
         );
     }
 
-    /// Unregister a WebSocket client connection and clean up any associated resources
+    /// Unregister a WebSocket client connection
     pub fn client_disconnected(&self, client_id: &str) {
         if let Some((_, client)) = self.connected_clients.remove(client_id) {
             let duration = client.connected_at.elapsed();
@@ -142,16 +124,6 @@ impl AppState {
                 self.connected_clients.len()
             );
         }
-
-        // Clean up any recordings associated with this client
-        // (In case the client disconnected while recording)
-        self.recordings.retain(|session_id, active_recorder| {
-            let keep = active_recorder.client_id.as_deref() != Some(client_id);
-            if !keep {
-                tracing::info!("Cleaning up orphaned recording session: {}", session_id);
-            }
-            keep
-        });
     }
 
     /// Get the number of active WebSocket connections
