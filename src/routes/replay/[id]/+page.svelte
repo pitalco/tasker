@@ -74,7 +74,7 @@
 
 	// Get available providers (those with keys configured)
 	const availableProviders = $derived(
-		PROVIDERS.filter(p => (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0)
+		PROVIDERS.filter(p => p.local || (apiKeys[p.id as keyof ApiKeys] ?? '').length > 0)
 	);
 
 	// Get models for current provider
@@ -276,6 +276,8 @@
 
 	// Check if current provider has API key configured
 	const hasAccessForCurrentProvider = $derived(() => {
+		const provider = PROVIDERS.find(p => p.id === llmProvider);
+		if (provider?.local) return true;
 		return (apiKeys[llmProvider as keyof ApiKeys] ?? '').length > 0;
 	});
 </script>

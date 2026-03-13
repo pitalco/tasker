@@ -28,6 +28,11 @@ pub enum WsEvent {
         session_id: String,
         error: String,
     },
+    FileCreated {
+        run_id: String,
+        file_name: String,
+        file_path: String,
+    },
     Pong,
 }
 

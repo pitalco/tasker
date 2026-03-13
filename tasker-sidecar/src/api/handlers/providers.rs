@@ -37,5 +37,19 @@ pub async fn list_providers() -> Json<ProvidersResponse> {
         ],
     );
 
+    providers.insert(
+        "ollama".to_string(),
+        vec![
+            "qwen35-4b-mind2web".to_string(),
+        ],
+    );
+
+    providers.insert(
+        "vllm".to_string(),
+        vec![
+            "qwen35-4b-mind2web".to_string(),
+        ],
+    );
+
     Json(ProvidersResponse { providers })
 }

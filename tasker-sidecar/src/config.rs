@@ -20,12 +20,14 @@ pub fn set_api_key_env(env_var: &str, value: &str) {
 }
 
 /// Helper to get the environment variable name for a provider
-pub fn get_env_var_for_provider(provider: &str) -> &'static str {
+/// Returns None for providers that don't require API keys (e.g. Ollama)
+pub fn get_env_var_for_provider(provider: &str) -> Option<&'static str> {
     match provider.to_lowercase().as_str() {
-        "anthropic" | "claude" => "ANTHROPIC_API_KEY",
-        "openai" | "gpt" => "OPENAI_API_KEY",
-        "gemini" | "google" => "GEMINI_API_KEY",
-        _ => "ANTHROPIC_API_KEY",
+        "anthropic" | "claude" => Some("ANTHROPIC_API_KEY"),
+        "openai" | "gpt" => Some("OPENAI_API_KEY"),
+        "gemini" | "google" => Some("GEMINI_API_KEY"),
+        "ollama" | "local" => None,
+        _ => Some("ANTHROPIC_API_KEY"),
     }
 }
 
@@ -63,6 +65,8 @@ struct LLMConfig {
     api_keys: ApiKeys,
     default_provider: Option<String>,
     default_model: Option<String>,
+    #[serde(default)]
+    vllm_base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +126,7 @@ pub fn get_api_key(provider: &str) -> Option<String> {
         "gemini" | "google" => config.api_keys.gemini.filter(|k| !k.is_empty()),
         "openai" | "gpt" => config.api_keys.openai.filter(|k| !k.is_empty()),
         "anthropic" | "claude" => config.api_keys.anthropic.filter(|k| !k.is_empty()),
+        "ollama" | "local" => None, // Ollama doesn't need an API key
         _ => {
             tracing::warn!("Unknown provider: {}", provider);
             None
@@ -197,4 +202,32 @@ pub fn get_default_model() -> Option<String> {
     };
 
     config.default_model
+}
+
+/// Get the vLLM base URL for a provider, or None if not a local provider.
+/// For "vllm" provider, reads the configured URL from settings (falls back to localhost:8080).
+pub fn get_vllm_base_url(provider: &str) -> Option<String> {
+    match provider.to_lowercase().as_str() {
+        "vllm" => {
+            // Try to read from DB settings first
+            if let Some(url) = get_vllm_base_url_from_db() {
+                return Some(url);
+            }
+            // Fall back to default vLLM port
+            Some("http://localhost:8080/v1/".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn get_vllm_base_url_from_db() -> Option<String> {
+    let db_path = get_db_path()?;
+    let conn = Connection::open(&db_path).ok()?;
+    let json: String = conn.query_row(
+        "SELECT llm_config_json FROM app_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ).ok()?;
+    let config: LLMConfig = serde_json::from_str(&json).ok()?;
+    config.vllm_base_url.filter(|u| !u.is_empty())
 }

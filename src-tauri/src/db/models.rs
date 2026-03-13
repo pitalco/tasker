@@ -134,6 +134,9 @@ pub struct LLMConfig {
     pub api_keys: ApiKeys,
     pub default_provider: String,
     pub default_model: String,
+    /// Base URL for vLLM or any local OpenAI-compatible server (e.g. http://localhost:8080/v1/)
+    #[serde(default)]
+    pub vllm_base_url: Option<String>,
 }
 
 impl Default for LLMConfig {
@@ -142,6 +145,7 @@ impl Default for LLMConfig {
             api_keys: ApiKeys::default(),
             default_provider: "gemini".to_string(),
             default_model: "gemini-2.0-flash".to_string(),
+            vllm_base_url: None,
         }
     }
 }
@@ -172,4 +176,5 @@ pub struct UpdateSettingsRequest {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
     pub default_max_steps: Option<i32>,
+    pub vllm_base_url: Option<String>,
 }

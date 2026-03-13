@@ -31,6 +31,12 @@ struct WsOutgoing {
     session: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
 }
 
 pub async fn ws_handler(
@@ -63,6 +69,9 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
                     result: None,
                     session: None,
                     error: None,
+                    run_id: None,
+                    file_name: None,
+                    file_path: None,
                 },
                 WsEvent::ReplayStep { session_id, result } => WsOutgoing {
                     msg_type: "replay_step".to_string(),
@@ -71,6 +80,9 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
                     result: Some(serde_json::to_value(&result).unwrap_or_default()),
                     session: None,
                     error: None,
+                    run_id: None,
+                    file_name: None,
+                    file_path: None,
                 },
                 WsEvent::ReplayComplete { session_id, session } => WsOutgoing {
                     msg_type: "replay_complete".to_string(),
@@ -79,6 +91,9 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
                     result: None,
                     session: Some(serde_json::to_value(&session).unwrap_or_default()),
                     error: None,
+                    run_id: None,
+                    file_name: None,
+                    file_path: None,
                 },
                 WsEvent::Error { session_id, error } => WsOutgoing {
                     msg_type: "error".to_string(),
@@ -87,6 +102,24 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
                     result: None,
                     session: None,
                     error: Some(error),
+                    run_id: None,
+                    file_name: None,
+                    file_path: None,
+                },
+                WsEvent::FileCreated {
+                    run_id,
+                    file_name,
+                    file_path,
+                } => WsOutgoing {
+                    msg_type: "file_created".to_string(),
+                    session_id: None,
+                    step: None,
+                    result: None,
+                    session: None,
+                    error: None,
+                    run_id: Some(run_id),
+                    file_name: Some(file_name),
+                    file_path: Some(file_path),
                 },
                 WsEvent::Pong => WsOutgoing {
                     msg_type: "pong".to_string(),
@@ -95,6 +128,9 @@ async fn handle_socket(socket: WebSocket, client_id: String, state: Arc<AppState
                     result: None,
                     session: None,
                     error: None,
+                    run_id: None,
+                    file_name: None,
+                    file_path: None,
                 },
             };
 

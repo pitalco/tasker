@@ -13,12 +13,14 @@ pub async fn update_settings(
     default_provider: Option<String>,
     default_model: Option<String>,
     default_max_steps: Option<i32>,
+    vllm_base_url: Option<String>,
 ) -> Result<AppSettings, String> {
     let req = UpdateSettingsRequest {
         api_keys,
         default_provider,
         default_model,
         default_max_steps,
+        vllm_base_url,
     };
 
     db::update_settings(req)

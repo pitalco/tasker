@@ -268,6 +268,9 @@ pub async fn update_settings(req: UpdateSettingsRequest) -> Result<AppSettings, 
     if let Some(default_model) = req.default_model {
         settings.llm_config.default_model = default_model;
     }
+    if let Some(vllm_base_url) = req.vllm_base_url {
+        settings.llm_config.vllm_base_url = if vllm_base_url.is_empty() { None } else { Some(vllm_base_url) };
+    }
     if let Some(default_max_steps) = req.default_max_steps {
         settings.default_max_steps = default_max_steps;
     }

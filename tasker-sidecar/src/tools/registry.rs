@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use tokio::sync::broadcast;
+
+use crate::api::state::WsEvent;
 use crate::browser::{BrowserManager, SelectorMap};
 use crate::runs::RunRepository;
 
@@ -107,6 +110,8 @@ pub struct ToolContext {
     pub file_repository: Option<Arc<RunRepository>>,
     /// In-memory storage for notes/memories during this run
     pub memories: Arc<RwLock<Vec<Memory>>>,
+    /// Broadcast sender for WebSocket events (file created notifications, etc.)
+    pub ws_broadcast: Option<broadcast::Sender<WsEvent>>,
 }
 
 /// Trait for implementing tools

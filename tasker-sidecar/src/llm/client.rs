@@ -10,22 +10,27 @@ pub enum LLMProvider {
     Anthropic,
     OpenAI,
     Gemini,
+    /// Local Ollama instance - no API key required
+    Ollama,
 }
 
 impl LLMProvider {
     /// Get the genai model ID for this provider and model name
     /// genai 0.4+ auto-detects provider from model prefix (gemini-, gpt-, claude-)
+    /// Unrecognized names fall back to Ollama adapter automatically
     pub fn model_id(&self, model: &str) -> String {
         // Just return the model name - genai auto-detects provider
         model.to_string()
     }
 
     /// Get the environment variable name for the API key
-    pub fn api_key_env_var(&self) -> &'static str {
+    /// Returns None for providers that don't need an API key (e.g. Ollama)
+    pub fn api_key_env_var(&self) -> Option<&'static str> {
         match self {
-            LLMProvider::Anthropic => "ANTHROPIC_API_KEY",
-            LLMProvider::OpenAI => "OPENAI_API_KEY",
-            LLMProvider::Gemini => "GEMINI_API_KEY",
+            LLMProvider::Anthropic => Some("ANTHROPIC_API_KEY"),
+            LLMProvider::OpenAI => Some("OPENAI_API_KEY"),
+            LLMProvider::Gemini => Some("GEMINI_API_KEY"),
+            LLMProvider::Ollama => None,
         }
     }
 }
@@ -38,6 +43,7 @@ impl std::str::FromStr for LLMProvider {
             "anthropic" | "claude" => Ok(LLMProvider::Anthropic),
             "openai" | "gpt" => Ok(LLMProvider::OpenAI),
             "gemini" | "google" => Ok(LLMProvider::Gemini),
+            "ollama" | "local" => Ok(LLMProvider::Ollama),
             _ => Err(anyhow!("Unknown LLM provider: {}", s)),
         }
     }
@@ -90,8 +96,8 @@ impl LLMClient {
     /// Create a new LLM client with the given configuration
     pub fn new(config: LLMConfig) -> Result<Self> {
         // Set API key in environment if provided (using thread-safe helper)
-        if let Some(ref api_key) = config.api_key {
-            crate::config::set_api_key_env(config.provider.api_key_env_var(), api_key);
+        if let (Some(ref api_key), Some(env_var)) = (&config.api_key, config.provider.api_key_env_var()) {
+            crate::config::set_api_key_env(env_var, api_key);
         }
 
         let client = Client::default();

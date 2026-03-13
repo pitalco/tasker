@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use genai::chat::{ChatMessage, ChatRequest, ContentPart, Tool, ToolResponse};
-use genai::resolver::{AuthData, AuthResolver};
+use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
 use genai::{Client, ModelIden};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -13,6 +13,7 @@ use tracing::instrument;
 
 use crate::agent::UserMessageBuilder;
 use crate::browser::{BrowserManager, SelectorMap};
+use crate::api::state::WsEvent;
 use crate::tools::{register_all_tools, ToolContext, ToolRegistry, ToolResult};
 
 
@@ -35,6 +36,8 @@ pub struct ExecutorConfig {
     pub min_llm_delay_ms: u64,
     /// Whether to capture screenshots after each step (disable for faster execution)
     pub capture_screenshots: bool,
+    /// Custom base URL for local/vLLM OpenAI-compatible servers (e.g. http://localhost:8080/v1/)
+    pub base_url: Option<String>,
 }
 
 /// Default minimum delay between LLM calls (2 seconds for rate limit safety)
@@ -50,6 +53,7 @@ impl Default for ExecutorConfig {
             provider: None,
             min_llm_delay_ms: DEFAULT_MIN_LLM_DELAY_MS,
             capture_screenshots: true,
+            base_url: None,
         }
     }
 }
@@ -62,10 +66,17 @@ pub struct RunExecutor {
     browser: Arc<BrowserManager>,
     /// Cancellation token for graceful shutdown
     cancel_token: CancellationToken,
+    /// Broadcast sender for WebSocket events
+    ws_broadcast: Option<tokio::sync::broadcast::Sender<WsEvent>>,
 }
 
 impl RunExecutor {
-    pub fn new(logger: RunLogger, browser: Arc<BrowserManager>, config: ExecutorConfig) -> Self {
+    pub fn new(
+        logger: RunLogger,
+        browser: Arc<BrowserManager>,
+        config: ExecutorConfig,
+        ws_broadcast: Option<tokio::sync::broadcast::Sender<WsEvent>>,
+    ) -> Self {
         let mut registry = ToolRegistry::new();
         register_all_tools(&mut registry);
 
@@ -75,6 +86,7 @@ impl RunExecutor {
             logger,
             browser,
             cancel_token: CancellationToken::new(),
+            ws_broadcast,
         }
     }
 
@@ -162,11 +174,24 @@ Keep taking actions until the condition above is clearly met.
             selector_map: Arc::clone(&selector_map),
             file_repository: Some(Arc::new(self.logger.repository().clone())),
             memories: Arc::clone(&memories),
+            ws_broadcast: self.ws_broadcast.clone(),
         };
 
         // Create genai client
-        // Pass API key directly through AuthResolver instead of using environment variables
-        let client = if let Some(api_key) = &self.config.api_key {
+        // For local servers (vLLM), use a ServiceTargetResolver to override the endpoint.
+        // Otherwise pass the API key through an AuthResolver.
+        let client = if let Some(base_url) = &self.config.base_url {
+            let base_url = base_url.clone();
+            let api_key = self.config.api_key.clone().unwrap_or_else(|| "not-needed".to_string());
+            let target_resolver = ServiceTargetResolver::from_resolver_fn(
+                move |mut target: genai::ServiceTarget| -> std::result::Result<genai::ServiceTarget, genai::resolver::Error> {
+                    target.endpoint = Endpoint::from_owned(base_url.clone());
+                    target.auth = AuthData::from_single(api_key.clone());
+                    Ok(target)
+                }
+            );
+            Client::builder().with_service_target_resolver(target_resolver).build()
+        } else if let Some(api_key) = &self.config.api_key {
             let api_key = api_key.clone();
             let auth_resolver = AuthResolver::from_resolver_fn(
                 move |_model_iden: ModelIden| -> std::result::Result<Option<AuthData>, genai::resolver::Error> {

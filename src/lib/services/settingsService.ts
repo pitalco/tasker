@@ -10,6 +10,7 @@ export interface LLMConfig {
 	api_keys: ApiKeys;
 	default_provider: string;
 	default_model: string;
+	vllm_base_url?: string;
 }
 
 export interface AppSettings {
@@ -33,18 +34,28 @@ export const PROVIDER_MODELS: Record<string, { id: string; name: string }[]> = {
 		{ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
 		{ id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
 		{ id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' }
+	],
+	ollama: [
+		{ id: 'qwen35-4b-mind2web', name: 'Qwen3.5 4B Mind2Web (local)' }
+	],
+	vllm: [
+		{ id: 'qwen35-4b-mind2web', name: 'Qwen3.5 4B Mind2Web (vLLM)' }
 	]
 };
 
 export interface ProviderInfo {
 	id: string;
 	name: string;
+	/** If true, no API key is required */
+	local?: boolean;
 }
 
 export const PROVIDERS: ProviderInfo[] = [
 	{ id: 'gemini', name: 'Google Gemini' },
 	{ id: 'openai', name: 'OpenAI' },
-	{ id: 'anthropic', name: 'Anthropic' }
+	{ id: 'anthropic', name: 'Anthropic' },
+	{ id: 'ollama', name: 'Ollama (Local)', local: true },
+	{ id: 'vllm', name: 'vLLM (Local)', local: true }
 ];
 
 export async function getSettings(): Promise<AppSettings> {
@@ -56,21 +67,23 @@ export async function updateSettings(options: {
 	default_provider?: string;
 	default_model?: string;
 	default_max_steps?: number;
+	vllm_base_url?: string;
 }): Promise<AppSettings> {
 	return invoke<AppSettings>('update_settings', {
 		apiKeys: options.api_keys,
 		defaultProvider: options.default_provider,
 		defaultModel: options.default_model,
-		defaultMaxSteps: options.default_max_steps
+		defaultMaxSteps: options.default_max_steps,
+		vllmBaseUrl: options.vllm_base_url
 	});
 }
 
-// Helper to get available models (from providers with keys configured)
+// Helper to get available models (from providers with keys configured, or local providers)
 export function getAvailableModels(apiKeys: ApiKeys): { provider: string; model: string; name: string }[] {
 	const available: { provider: string; model: string; name: string }[] = [];
 
 	for (const provider of PROVIDERS) {
-		const hasKey = (apiKeys[provider.id as keyof ApiKeys] ?? '').length > 0;
+		const hasKey = provider.local || (apiKeys[provider.id as keyof ApiKeys] ?? '').length > 0;
 
 		if (hasKey) {
 			for (const model of PROVIDER_MODELS[provider.id] || []) {

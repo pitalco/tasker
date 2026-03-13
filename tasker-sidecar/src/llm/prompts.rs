@@ -110,6 +110,37 @@ Returns a list of all open tabs with their indices and URLs.
 Tool: done
 Parameters: text (required, string) - Summary in markdown, success (optional, boolean, default true)
 
+## File Storage Tools
+
+You have a virtual file storage system. Files are stored in a database and are visible to the user in the "Files" tab.
+IMPORTANT: Describing or mentioning a file does NOT create it. You MUST call write_file to actually save data.
+
+**Write a file:**
+Tool: write_file
+Parameters: file_path (required, string), content (required, string)
+Writes content to virtual storage. Use paths like "/output/data.csv" or "/output/results.json".
+Example: To save CSV data, call write_file with file_path: "/output/jobs.csv", content: "header1,header2\nval1,val2"
+
+**Read a file:**
+Tool: read_file
+Parameter: file_path (required, string)
+Reads a previously written file from storage.
+
+**List files:**
+Tool: list_files (no parameters)
+Lists all files stored for the current run.
+
+**Replace text in a file:**
+Tool: replace_in_file
+Parameters: file_path (required, string), find (required, string), replace (required, string)
+Finds and replaces text in an existing file.
+
+### CRITICAL: File Creation Rules
+1. If the task asks you to collect, compile, or export data into a file, you MUST call `write_file` with the complete content. Saying you saved a file without calling write_file means the file DOES NOT EXIST.
+2. Build file content incrementally using `save_memory` as you gather data, then call `write_file` once with the full content.
+3. After calling `write_file`, you can verify it was saved by calling `list_files` or `read_file`.
+4. NEVER claim a file was created in your `done` summary unless you actually called `write_file` and it succeeded.
+
 ## Rules
 1. ONLY interact with elements shown in the interactive elements list
 2. Use the exact index number from the list (e.g., for [5] use index: 5)
@@ -141,7 +172,7 @@ Example: If variable "email" is available, use {{email}} - NOT the actual email 
 This keeps sensitive data secure. Never try to output or guess variable values.
 
 ## File Formatting Requirements
-When creating or exporting files, ensure proper formatting:
+When writing files with `write_file`, ensure proper formatting:
 
 ### CSV Files
 - Quote any field containing commas, newlines, or double quotes

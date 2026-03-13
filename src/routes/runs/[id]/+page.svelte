@@ -99,6 +99,14 @@
 		}
 	}
 
+	function handleFileCreated(data: unknown) {
+		const fileData = data as { run_id: string };
+		if (fileData.run_id === runId) {
+			// Refresh files list when a file is created for this run
+			loadFiles();
+		}
+	}
+
 	onMount(async () => {
 		// Load run data from DB
 		if (runId) {
@@ -113,6 +121,7 @@
 			// Add event listeners
 			ws.on('replay_step', handleStepUpdate);
 			ws.on('replay_complete', handleComplete);
+			ws.on('file_created', handleFileCreated);
 
 			// Check if run is active
 			if (runsState.currentRun?.status === 'running' || runsState.currentRun?.status === 'pending') {
@@ -136,6 +145,7 @@
 		// Clean up WebSocket listeners
 		ws.off('replay_step', handleStepUpdate);
 		ws.off('replay_complete', handleComplete);
+		ws.off('file_created', handleFileCreated);
 		runsState.clearCurrent();
 	});
 
@@ -177,7 +187,7 @@
 
 	function switchToFilesTab() {
 		activeTab = 'files';
-		if (runFiles.length === 0 && !filesLoading) {
+		if (!filesLoading) {
 			loadFiles();
 		}
 	}

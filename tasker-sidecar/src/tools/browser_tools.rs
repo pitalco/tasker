@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::registry::{Tool, ToolContext, ToolDefinition, ToolResult};
+use crate::api::state::WsEvent;
 use crate::runs::RunFile;
 
 // ============================================================================
@@ -1274,11 +1275,21 @@ impl Tool for WriteFileTool {
         );
 
         match repo.upsert_file(&file) {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Wrote {} bytes to '{}'",
-                content.len(),
-                file_path
-            ))),
+            Ok(()) => {
+                // Broadcast file created event via WebSocket
+                if let Some(ref tx) = ctx.ws_broadcast {
+                    let _ = tx.send(WsEvent::FileCreated {
+                        run_id: ctx.run_id.clone(),
+                        file_name: file.file_name.clone(),
+                        file_path: file_path.to_string(),
+                    });
+                }
+                Ok(ToolResult::success(format!(
+                    "Wrote {} bytes to '{}'",
+                    content.len(),
+                    file_path
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!(
                 "Failed to write file '{}': {}",
                 file_path, e
@@ -1365,10 +1376,20 @@ impl Tool for ReplaceInFileTool {
         );
 
         match repo.upsert_file(&updated_file) {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Replaced {} occurrences in '{}'",
-                count, file_path
-            ))),
+            Ok(()) => {
+                // Broadcast file created/updated event via WebSocket
+                if let Some(ref tx) = ctx.ws_broadcast {
+                    let _ = tx.send(WsEvent::FileCreated {
+                        run_id: ctx.run_id.clone(),
+                        file_name: updated_file.file_name.clone(),
+                        file_path: file_path.to_string(),
+                    });
+                }
+                Ok(ToolResult::success(format!(
+                    "Replaced {} occurrences in '{}'",
+                    count, file_path
+                )))
+            }
             Err(e) => Ok(ToolResult::error(format!("Failed to write file: {}", e))),
         }
     }

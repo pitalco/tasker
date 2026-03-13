@@ -28,8 +28,11 @@
 	// Default max steps
 	let defaultMaxSteps = $state(50);
 
-	// All providers require API keys
-	const apiKeyProviders = $derived(PROVIDERS);
+	// vLLM base URL
+	let vllmBaseUrl = $state('http://localhost:8080/v1/');
+
+	// Providers that require API keys (excludes local providers like Ollama)
+	const apiKeyProviders = $derived(PROVIDERS.filter((p) => !p.local));
 
 	onMount(async () => {
 		try {
@@ -42,6 +45,7 @@
 			defaultProvider = settings.llm_config.default_provider;
 			defaultModel = settings.llm_config.default_model;
 			defaultMaxSteps = settings.default_max_steps || 50;
+			vllmBaseUrl = settings.llm_config.vllm_base_url || 'http://localhost:8080/v1/';
 		} catch (e) {
 			console.warn('Failed to load settings, using defaults');
 		} finally {
@@ -81,7 +85,8 @@
 				api_keys: keysToSave,
 				default_provider: defaultProvider,
 				default_model: defaultModel,
-				default_max_steps: defaultMaxSteps
+				default_max_steps: defaultMaxSteps,
+				vllm_base_url: vllmBaseUrl
 			});
 			successMessage = 'Settings saved successfully!';
 			setTimeout(() => (successMessage = null), 3000);
@@ -179,6 +184,50 @@
 						</div>
 					{/each}
 				</div>
+			</div>
+		</div>
+
+		<!-- Local Models Section -->
+		<div class="card-brutal p-0 overflow-hidden">
+			<div class="bg-brutal-yellow h-2 border-b-3 border-black"></div>
+			<div class="p-6 space-y-4">
+				<div>
+					<h2 class="text-xl font-bold text-black">LOCAL MODELS</h2>
+					<p class="text-sm text-black/60 font-medium mt-1">
+						Local models via <strong>Ollama</strong> — no API key needed. Make sure Ollama is running
+						(<code class="font-mono bg-black/10 px-1">ollama serve</code>).
+					</p>
+				</div>
+
+				{#each PROVIDERS.filter((p) => p.local) as provider}
+					<div
+						class="border-3 border-black p-4 bg-brutal-lime/20"
+						style="box-shadow: 3px 3px 0 0 #000;"
+					>
+						<div class="flex items-center gap-2 mb-1">
+							<span class="font-bold text-black">{provider.name}</span>
+							<svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+								<path
+									fill-rule="evenodd"
+									d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</div>
+						<p class="text-xs text-black/60 mb-2">
+							{PROVIDER_MODELS[provider.id]?.length || 0} model(s) available · Always enabled
+						</p>
+						{#if provider.id === 'vllm'}
+							<label class="block text-xs font-bold text-black uppercase mb-1">Base URL</label>
+							<input
+								type="text"
+								bind:value={vllmBaseUrl}
+								placeholder="http://localhost:8080/v1/"
+								class="input-brutal text-sm font-mono"
+							/>
+						{/if}
+					</div>
+				{/each}
 			</div>
 		</div>
 

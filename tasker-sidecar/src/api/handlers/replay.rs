@@ -100,8 +100,7 @@ pub async fn start_replay(
     let api_key = crate::config::get_api_key(provider);
 
     // Set up environment variable for the provider (using thread-safe helper)
-    if let Some(ref key) = api_key {
-        let env_var = crate::config::get_env_var_for_provider(provider);
+    if let (Some(ref key), Some(env_var)) = (&api_key, crate::config::get_env_var_for_provider(provider)) {
         crate::config::set_api_key_env(env_var, key);
     }
 
@@ -128,6 +127,8 @@ pub async fn start_replay(
     // Create logger and executor
     let logger = RunLogger::new(repo.clone());
 
+    let base_url = crate::config::get_vllm_base_url(provider);
+
     let config = ExecutorConfig {
         model: model.to_string(),
         api_key,
@@ -136,9 +137,10 @@ pub async fn start_replay(
         provider: Some(provider.to_string()),
         min_llm_delay_ms: 2000, // 2 seconds minimum between LLM calls
         capture_screenshots: true, // Enable screenshots by default for debugging
+        base_url,
     };
 
-    let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config);
+    let executor = RunExecutor::new(logger.clone(), Arc::clone(&browser), config, Some(state.ws_broadcast.clone()));
     let cancel_token = executor.cancel_token();
 
     // Store cancel token for external cancellation
